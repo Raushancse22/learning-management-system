@@ -1,0 +1,35 @@
+{
+  "name": "lms-website",
+  "version": "1.0.0",
+  "description": "Full-stack learning management system website built with Node.js, Express, SQLite, React, and Tailwind CSS.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "npm run build && node server.js",
+    "server": "node server.js",
+    "server:dev": "node --watch server.js",
+    "dev": "vite --config vite.config.mjs",
+    "build": "vite build --config vite.config.mjs",
+    "migrate:cloud": "node scripts/migrate-local-to-cloud.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.100.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.3.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "pg": "^8.20.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-icons": "^5.6.0",
+    "react-router-dom": "^7.13.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.17",
+    "vite": "^8.0.1"
+  }
+}

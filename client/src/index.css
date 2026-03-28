@@ -1,0 +1,163 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --brand-ink: #0f2942;
+  --brand-sea: #0f766e;
+  --brand-sky: #3b82f6;
+  --brand-sand: #f6f0e6;
+  --brand-sun: #f59e0b;
+  --brand-coral: #ea580c;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply min-h-screen bg-stone-100 text-slate-900 antialiased;
+    background-image:
+      radial-gradient(circle at top left, rgba(20, 184, 166, 0.16), transparent 34%),
+      radial-gradient(circle at top right, rgba(245, 158, 11, 0.16), transparent 28%),
+      linear-gradient(180deg, #f8f4ec 0%, #f0ede6 54%, #eef3f7 100%);
+    font-family: "Inter", "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: "Poppins", "Inter", sans-serif;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+  }
+
+  p {
+    line-height: 1.72;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    @apply outline-none;
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  .type-eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.32em];
+  }
+
+  .type-hero {
+    @apply text-5xl leading-[0.95] tracking-[-0.05em] lg:text-7xl;
+  }
+
+  .type-page-title {
+    @apply text-4xl leading-[1] tracking-[-0.04em] lg:text-6xl;
+  }
+
+  .type-section-title {
+    @apply text-3xl leading-[1.04] tracking-[-0.035em] lg:text-4xl;
+  }
+
+  .type-lead {
+    @apply text-[15px] leading-8 text-slate-600 lg:text-base;
+  }
+
+  .type-copy {
+    @apply text-sm leading-7 text-slate-600;
+  }
+
+  .glass-panel {
+    @apply rounded-[28px] border border-white/70 bg-white/85 shadow-halo backdrop-blur transition duration-300;
+  }
+
+  .section-card {
+    @apply rounded-[24px] border border-slate-200/70 bg-white/90 shadow-lg shadow-slate-200/50 transition duration-300;
+  }
+
+  .metric-card {
+    @apply section-card p-6 transition duration-300 hover:-translate-y-1 hover:shadow-xl;
+  }
+
+  .field {
+    @apply w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-900 shadow-sm transition focus:border-teal-500 focus:ring-2 focus:ring-teal-200;
+  }
+
+  .button-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-teal-700 px-4 py-3 text-sm font-semibold tracking-[-0.01em] text-white shadow-sm transition duration-300 hover:-translate-y-0.5 hover:bg-teal-800 hover:shadow-lg hover:shadow-teal-900/15;
+  }
+
+  .button-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold tracking-[-0.01em] text-slate-800 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:border-teal-300 hover:text-teal-700 hover:shadow-lg hover:shadow-slate-200/60;
+  }
+
+  .button-warm {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold tracking-[-0.01em] text-slate-950 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-700/20;
+  }
+
+  .button-primary svg,
+  .button-secondary svg,
+  .button-warm svg {
+    @apply transition duration-300;
+  }
+
+  .button-primary:hover svg,
+  .button-secondary:hover svg,
+  .button-warm:hover svg {
+    transform: translateX(2px);
+  }
+
+  .page-shell {
+    animation: page-enter 0.55s cubic-bezier(0.21, 0.98, 0.33, 1) both;
+  }
+
+  .interactive-card {
+    @apply transition duration-300 hover:-translate-y-1.5 hover:border-teal-200 hover:shadow-2xl hover:shadow-slate-200/70;
+  }
+
+  .interactive-soft {
+    @apply transition duration-300 hover:-translate-y-0.5 hover:shadow-lg;
+  }
+
+  .skeleton-surface {
+    @apply overflow-hidden rounded-[24px] border border-white/70 bg-white/85 shadow-lg shadow-slate-200/40;
+    background-image: linear-gradient(90deg, rgba(226, 232, 240, 0.72) 25%, rgba(248, 250, 252, 0.94) 50%, rgba(226, 232, 240, 0.72) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  }
+
+  .skeleton-line {
+    @apply rounded-full bg-slate-200/90;
+  }
+}
