@@ -55,6 +55,21 @@ npm.cmd run dev
 
 The Vite frontend runs at `http://localhost:5173` and proxies API requests to the backend at `http://localhost:3000`.
 
+## Deploy on Render
+
+This repo includes a Render Blueprint at `render.yaml`.
+
+To deploy:
+
+1. Open Render and choose `New` -> `Blueprint`
+2. Select this GitHub repository
+3. Add the secret environment variable values when prompted:
+   - `DATABASE_URL`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `JWT_SECRET`
+4. Complete the deploy and then add your custom domain `gatemate.tech`
+
 ## Cloud setup
 
 1. Copy `.env.example` to `.env`

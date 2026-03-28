@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: gatemate-learning
+    runtime: node
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: npm run server
+    autoDeployTrigger: commit
+    healthCheckPath: /api/catalog
+    envVars:
+      - key: DATABASE_PROVIDER
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: STORAGE_PROVIDER
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
