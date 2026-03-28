@@ -2,6 +2,7 @@ services:
   - type: web
     name: gatemate-learning
     runtime: node
+    plan: free
     branch: main
     buildCommand: npm install && npm run build
     startCommand: npm run server
