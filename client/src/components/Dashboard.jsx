@@ -16,6 +16,7 @@ import {
   FaSignOutAlt,
   FaUser,
   FaUsersCog,
+  FaVideo,
 } from "react-icons/fa";
 
 import AdminPanel from "./AdminPanel";
@@ -23,6 +24,7 @@ import BrandLogo from "./BrandLogo";
 import CatalogPanel from "./CatalogPanel";
 import CourseWorkspace from "./CourseWorkspace";
 import InstructorStudio from "./InstructorStudio";
+import LiveClassesPanel from "./LiveClassesPanel";
 import { formatDate, formatPercent } from "../lib/format";
 
 const curatedRecommendationLibrary = [
@@ -839,11 +841,13 @@ export default function Dashboard({
   catalogLoading,
   courseLoading,
   studioLoading,
+  liveClassesLoading,
   adminLoading,
   busyAction,
   selectedCourse,
   activeLessonId,
   manageCourses,
+  liveClasses,
   adminAnalytics,
   adminUsers,
   onNavigate,
@@ -861,6 +865,9 @@ export default function Dashboard({
   onAddLesson,
   onDeleteLesson,
   onSaveQuiz,
+  onRegisterLiveClass,
+  onSaveLiveClass,
+  onDeleteLiveClass,
   onReviewCourse,
   onChangeUserRole,
 }) {
@@ -872,6 +879,7 @@ export default function Dashboard({
     }
 
     items.push({ key: "catalog", label: "Catalog", icon: FaCompass });
+    items.push({ key: "liveClasses", label: "Live Classes", icon: FaVideo });
 
     if (user.role === "instructor") {
       items.push({ key: "studio", label: "Studio", icon: FaUsersCog });
@@ -890,6 +898,7 @@ export default function Dashboard({
     dashboard: "Dashboard",
     courses: "My Courses",
     catalog: "Catalog",
+    liveClasses: "Live Classes",
     workspace: selectedCourse?.course?.title || "Workspace",
     studio: "Studio",
     admin: "Admin Panel",
@@ -928,6 +937,18 @@ export default function Dashboard({
         onFilterChange={onFilterChange}
         onOpenCourse={onOpenCourse}
         onEnroll={onEnroll}
+      />
+    );
+  } else if (activeView === "liveClasses") {
+    mainContent = (
+      <LiveClassesPanel
+        user={user}
+        liveClasses={liveClasses}
+        loading={liveClassesLoading}
+        busyAction={busyAction}
+        onRegisterLiveClass={onRegisterLiveClass}
+        onSaveLiveClass={onSaveLiveClass}
+        onDeleteLiveClass={onDeleteLiveClass}
       />
     );
   } else if (activeView === "workspace") {

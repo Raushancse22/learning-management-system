@@ -320,6 +320,83 @@ async function upsertNotification({ userId, title, legacyTitle, message, link, c
   );
 }
 
+async function upsertLiveClass({ title, description, category, hostId, meetingUrl, scheduledAt, durationMinutes, createdAt }) {
+  const existing = await get(
+    `
+      SELECT id
+      FROM live_classes
+      WHERE title = :title
+      LIMIT 1
+    `,
+    { title },
+  );
+
+  if (existing) {
+    await run(
+      `
+        UPDATE live_classes
+        SET description = :description,
+            category = :category,
+            host_id = :hostId,
+            meeting_url = :meetingUrl,
+            scheduled_at = :scheduledAt,
+            duration_minutes = :durationMinutes,
+            updated_at = :updatedAt
+        WHERE id = :liveClassId
+      `,
+      {
+        description,
+        category,
+        hostId,
+        meetingUrl,
+        scheduledAt,
+        durationMinutes,
+        updatedAt: createdAt,
+        liveClassId: Number(existing.id),
+      },
+    );
+
+    return Number(existing.id);
+  }
+
+  return Number(
+    (
+      await run(
+        `
+          INSERT INTO live_classes (title, description, category, host_id, meeting_url, scheduled_at, duration_minutes, created_at, updated_at)
+          VALUES (:title, :description, :category, :hostId, :meetingUrl, :scheduledAt, :durationMinutes, :createdAt, :updatedAt)
+        `,
+        {
+          title,
+          description,
+          category,
+          hostId,
+          meetingUrl,
+          scheduledAt,
+          durationMinutes,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      )
+    ).lastInsertRowid,
+  );
+}
+
+async function ensureLiveClassRegistration({ liveClassId, userId, registeredAt }) {
+  await run(
+    `
+      INSERT INTO live_class_registrations (live_class_id, user_id, registered_at)
+      VALUES (:liveClassId, :userId, :registeredAt)
+      ON CONFLICT (live_class_id, user_id) DO NOTHING
+    `,
+    {
+      liveClassId,
+      userId,
+      registeredAt,
+    },
+  );
+}
+
 async function syncDemoContent() {
   const createdAt = nowIso();
 
@@ -363,6 +440,30 @@ async function syncDemoContent() {
       "Admins can approve or reject this course to test moderation, notifications, and review workflows.",
     instructorId,
     status: "pending",
+    createdAt,
+  });
+
+  const aiLiveClassId = await upsertLiveClass({
+    title: "Live Bootcamp: Generative AI Workflows",
+    description:
+      "A mentor-led live class covering prompt frameworks, agent loops, and practical evaluation examples for modern GenAI projects.",
+    category: "Generative AI",
+    hostId: instructorId,
+    meetingUrl: "https://meet.google.com/landing",
+    scheduledAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    durationMinutes: 90,
+    createdAt,
+  });
+
+  await upsertLiveClass({
+    title: "Live Problem Solving: C++ Interview Sprint",
+    description:
+      "Practice arrays, STL, and timed coding patterns in a fast-paced live classroom built for interview preparation.",
+    category: "C++",
+    hostId: adminId,
+    meetingUrl: "https://zoom.us/",
+    scheduledAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString(),
+    durationMinutes: 75,
     createdAt,
   });
 
@@ -493,6 +594,12 @@ async function syncDemoContent() {
     },
   );
 
+  await ensureLiveClassRegistration({
+    liveClassId: aiLiveClassId,
+    userId: studentId,
+    registeredAt: createdAt,
+  });
+
   await upsertNotification({
     userId: studentId,
     title: "Welcome to Gatemate Learning",
@@ -500,6 +607,15 @@ async function syncDemoContent() {
     message:
       "Your demo learner account is enrolled in Generative AI Mastery so you can test progress tracking right away.",
     link: `/learn/${generativeAiCourseId}`,
+    createdAt,
+  });
+
+  await upsertNotification({
+    userId: studentId,
+    title: "Live class added to your calendar",
+    legacyTitle: "Live class added to your calendar",
+    message: "Your demo learner account already has a saved seat for the upcoming Generative AI live bootcamp.",
+    link: "/live-classes",
     createdAt,
   });
 
@@ -513,11 +629,29 @@ async function syncDemoContent() {
   });
 
   await upsertNotification({
+    userId: instructorId,
+    title: "Live class schedule ready",
+    legacyTitle: "Live class schedule ready",
+    message: "A Generative AI live class is seeded so you can test live session scheduling right away.",
+    link: "/live-classes",
+    createdAt,
+  });
+
+  await upsertNotification({
     userId: adminId,
     title: "Approval queue ready",
     legacyTitle: "Approval queue ready",
     message: "A demo course is waiting in the moderation queue so you can test admin workflows.",
     link: "/admin",
+    createdAt,
+  });
+
+  await upsertNotification({
+    userId: adminId,
+    title: "C++ live sprint scheduled",
+    legacyTitle: "C++ live sprint scheduled",
+    message: "A demo C++ live class is available so the admin account can review the hosted-session experience.",
+    link: "/live-classes",
     createdAt,
   });
 }

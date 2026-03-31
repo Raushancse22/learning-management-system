@@ -4,10 +4,12 @@ const { authRequired, roleRequired } = require("../auth");
 const { all, nowIso, run, text, toInt } = require("../db");
 const {
   attachManagedCourse,
+  attachManagedLiveClass,
   attachManagedLesson,
   getCourseDetail,
   getCourseRecord,
   listCourseSummaries,
+  notifyLiveClassRegistrants,
   notifyAdmins,
   notifyEnrolledLearners,
   notifyRole,
@@ -17,6 +19,24 @@ const { cleanupRequestFiles, upload } = require("../uploads");
 const { persistUploadedFile, safeDeleteUpload } = require("../storage");
 
 const router = express.Router();
+
+function parseScheduledAt(value) {
+  const scheduledAt = text(value);
+  const parsedDate = scheduledAt ? new Date(scheduledAt) : null;
+
+  if (!scheduledAt || !parsedDate || Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate.toISOString();
+}
+
+function formatSessionTime(value) {
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
 
 router.get("/manage/courses", authRequired, roleRequired("instructor", "admin"), async (request, response, next) => {
   try {
@@ -30,6 +50,122 @@ router.get("/manage/courses", authRequired, roleRequired("instructor", "admin"),
           });
 
     response.json({ courses });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/live-classes", authRequired, roleRequired("instructor", "admin"), async (request, response, next) => {
+  try {
+    const title = text(request.body.title);
+    const description = text(request.body.description);
+    const category = text(request.body.category);
+    const meetingUrl = text(request.body.meetingUrl);
+    const scheduledAt = parseScheduledAt(request.body.scheduledAt);
+    const durationMinutes = Math.max(toInt(request.body.durationMinutes) || 60, 15);
+
+    if (!title || !description || !category || !meetingUrl || !scheduledAt) {
+      response.status(400).json({ message: "Title, description, category, meeting link, and schedule are required." });
+      return;
+    }
+
+    const createdAt = nowIso();
+    await run(
+      `
+        INSERT INTO live_classes (title, description, category, host_id, meeting_url, scheduled_at, duration_minutes, created_at, updated_at)
+        VALUES (:title, :description, :category, :hostId, :meetingUrl, :scheduledAt, :durationMinutes, :createdAt, :updatedAt)
+      `,
+      {
+        title,
+        description,
+        category,
+        hostId: request.user.id,
+        meetingUrl,
+        scheduledAt,
+        durationMinutes,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    );
+
+    await notifyRole(
+      "student",
+      "New live class scheduled",
+      `${title} is scheduled for ${formatSessionTime(scheduledAt)} with ${request.user.name}.`,
+      "/live-classes",
+    );
+
+    response.status(201).json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/live-classes/:id", authRequired, roleRequired("instructor", "admin"), attachManagedLiveClass("id"), async (request, response, next) => {
+  try {
+    const title = text(request.body.title);
+    const description = text(request.body.description);
+    const category = text(request.body.category);
+    const meetingUrl = text(request.body.meetingUrl);
+    const scheduledAt = parseScheduledAt(request.body.scheduledAt);
+    const durationMinutes = Math.max(toInt(request.body.durationMinutes) || 60, 15);
+
+    if (!title || !description || !category || !meetingUrl || !scheduledAt) {
+      response.status(400).json({ message: "Title, description, category, meeting link, and schedule are required." });
+      return;
+    }
+
+    await run(
+      `
+        UPDATE live_classes
+        SET title = :title,
+            description = :description,
+            category = :category,
+            meeting_url = :meetingUrl,
+            scheduled_at = :scheduledAt,
+            duration_minutes = :durationMinutes,
+            updated_at = :updatedAt
+        WHERE id = :liveClassId
+      `,
+      {
+        title,
+        description,
+        category,
+        meetingUrl,
+        scheduledAt,
+        durationMinutes,
+        updatedAt: nowIso(),
+        liveClassId: Number(request.liveClass.id),
+      },
+    );
+
+    await notifyLiveClassRegistrants(
+      Number(request.liveClass.id),
+      "Live class updated",
+      `${title} has a refreshed schedule or join link. Check the latest details before the session starts.`,
+      "/live-classes",
+    );
+
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/live-classes/:id", authRequired, roleRequired("instructor", "admin"), attachManagedLiveClass("id"), async (request, response, next) => {
+  try {
+    await notifyLiveClassRegistrants(
+      Number(request.liveClass.id),
+      "Live class canceled",
+      `${request.liveClass.title} has been removed from the schedule.`,
+      "/live-classes",
+    );
+
+    await run("DELETE FROM live_classes WHERE id = :liveClassId", {
+      liveClassId: Number(request.liveClass.id),
+    });
+
+    response.json({ ok: true });
   } catch (error) {
     next(error);
   }

@@ -99,9 +99,11 @@ export default function App() {
 
   const [courseLoading, setCourseLoading] = useState(false);
   const [studioLoading, setStudioLoading] = useState(false);
+  const [liveClassesLoading, setLiveClassesLoading] = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminAnalytics, setAdminAnalytics] = useState(null);
   const [adminUsers, setAdminUsers] = useState([]);
+  const [liveClasses, setLiveClasses] = useState([]);
 
   const [busyAction, setBusyAction] = useState(null);
   const [toast, setToast] = useState(null);
@@ -140,12 +142,29 @@ export default function App() {
       if (!currentUser) {
         setDashboard(null);
         setManageCourses([]);
+        setLiveClasses([]);
+        setLiveClassesLoading(false);
         setAdminAnalytics(null);
         setAdminUsers([]);
         return;
       }
 
       const jobs = [];
+
+      setLiveClassesLoading(true);
+      jobs.push(
+        api
+          .getLiveClasses()
+          .then((response) => {
+            setLiveClasses(response.classes || []);
+          })
+          .catch((error) => {
+            showToast(getErrorMessage(error));
+          })
+          .finally(() => {
+            setLiveClassesLoading(false);
+          }),
+      );
 
       jobs.push(
         api
@@ -283,6 +302,7 @@ export default function App() {
         dashboard: "/dashboard",
         courses: "/my-courses",
         catalog: "/courses",
+        liveClasses: "/live-classes",
         studio: "/studio",
         admin: "/admin",
         profile: "/profile",
@@ -371,6 +391,7 @@ export default function App() {
       setUser(null);
       setDashboard(null);
       setManageCourses([]);
+      setLiveClasses([]);
       setAdminAnalytics(null);
       setAdminUsers([]);
       clearSelectedCourse();
@@ -575,6 +596,71 @@ export default function App() {
     [refreshAfterMutation, showToast, user],
   );
 
+  const handleRegisterLiveClass = useCallback(
+    async (liveClassId) => {
+      if (!user) {
+        showToast("Sign in first to reserve a live class seat.");
+        navigate("/login");
+        return false;
+      }
+
+      setBusyAction(`register-live-class:${liveClassId}`);
+      try {
+        await api.registerLiveClass(liveClassId);
+        await refreshRoleData(user);
+        showToast("Your seat has been reserved for the live class.");
+        return true;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return false;
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [navigate, refreshRoleData, showToast, user],
+  );
+
+  const handleSaveLiveClass = useCallback(
+    async (liveClassId, payload) => {
+      setBusyAction("save-live-class");
+      try {
+        if (liveClassId) {
+          await api.updateLiveClass(liveClassId, payload);
+        } else {
+          await api.createLiveClass(payload);
+        }
+
+        await refreshRoleData(user);
+        showToast(liveClassId ? "Live class updated successfully." : "Live class scheduled successfully.");
+        return true;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return false;
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [refreshRoleData, showToast, user],
+  );
+
+  const handleDeleteLiveClass = useCallback(
+    async (liveClassId) => {
+      setBusyAction(`delete-live-class:${liveClassId}`);
+      try {
+        await api.deleteLiveClass(liveClassId);
+        await refreshRoleData(user);
+        showToast("Live class removed from the schedule.");
+        return true;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return false;
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [refreshRoleData, showToast, user],
+  );
+
   const handleReviewCourse = useCallback(
     async (courseId, status) => {
       setBusyAction(`review:${courseId}:${status}`);
@@ -636,11 +722,13 @@ export default function App() {
     catalogLoading,
     courseLoading,
     studioLoading,
+    liveClassesLoading,
     adminLoading,
     busyAction,
     selectedCourse,
     activeLessonId,
     manageCourses,
+    liveClasses,
     adminAnalytics,
     adminUsers,
     onNavigate: handleDashboardNavigate,
@@ -658,6 +746,9 @@ export default function App() {
     onAddLesson: handleAddLesson,
     onDeleteLesson: handleDeleteLesson,
     onSaveQuiz: handleSaveQuiz,
+    onRegisterLiveClass: handleRegisterLiveClass,
+    onSaveLiveClass: handleSaveLiveClass,
+    onDeleteLiveClass: handleDeleteLiveClass,
     onReviewCourse: handleReviewCourse,
     onChangeUserRole: handleChangeUserRole,
   };
@@ -795,6 +886,14 @@ export default function App() {
           element={
             <RoleGuard user={user} allow={["student"]}>
               <Dashboard activeView="courses" {...sharedDashboardProps} />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/live-classes"
+          element={
+            <RoleGuard user={user}>
+              <Dashboard activeView="liveClasses" {...sharedDashboardProps} />
             </RoleGuard>
           }
         />

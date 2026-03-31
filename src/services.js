@@ -44,6 +44,21 @@ async function notifyEnrolledLearners(courseId, title, message, link = "") {
   }
 }
 
+async function notifyLiveClassRegistrants(liveClassId, title, message, link = "") {
+  const attendees = await all(
+    `
+      SELECT DISTINCT user_id AS userId
+      FROM live_class_registrations
+      WHERE live_class_id = :liveClassId
+    `,
+    { liveClassId },
+  );
+
+  for (const attendee of attendees) {
+    await notifyUser(Number(attendee.userId), title, message, link);
+  }
+}
+
 async function countAdmins() {
   const row = await get(
     `
@@ -135,6 +150,160 @@ async function getCourseRecord(courseId) {
 
 function canManageCourse(user, course) {
   return Boolean(user) && (user.role === "admin" || Number(course.instructorId) === Number(user.id));
+}
+
+function canManageLiveClass(user, liveClass) {
+  return Boolean(user) && (user.role === "admin" || Number(liveClass.hostId) === Number(user.id));
+}
+
+function getLiveClassState(scheduledAt, durationMinutes = 60) {
+  const startAt = new Date(scheduledAt);
+  if (Number.isNaN(startAt.getTime())) {
+    return "upcoming";
+  }
+
+  const safeDuration = Math.max(Number(durationMinutes || 60), 15);
+  const endAt = new Date(startAt.getTime() + safeDuration * 60 * 1000);
+  const now = Date.now();
+
+  if (now >= endAt.getTime()) {
+    return "completed";
+  }
+
+  if (now >= startAt.getTime()) {
+    return "live";
+  }
+
+  return "upcoming";
+}
+
+function mapLiveClassSummary(row, user = null) {
+  const durationMinutes = Math.max(Number(row.durationMinutes || 60), 15);
+  const canManage = canManageLiveClass(user, row);
+  const isRegistered = Boolean(row.isRegistered);
+
+  return {
+    id: Number(row.id),
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    hostId: Number(row.hostId),
+    hostName: row.hostName,
+    scheduledAt: row.scheduledAt,
+    durationMinutes,
+    attendeeCount: Number(row.attendeeCount || 0),
+    isRegistered,
+    canManage,
+    meetingUrl: canManage || isRegistered ? row.meetingUrl : "",
+    sessionState: getLiveClassState(row.scheduledAt, durationMinutes),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function listLiveClasses({ viewerId = 0, user = null, whereClause = "1 = 1", params = {} } = {}) {
+  const rows = await all(
+    `
+      SELECT
+        lc.id,
+        lc.title,
+        lc.description,
+        lc.category,
+        lc.host_id AS hostId,
+        lc.meeting_url AS meetingUrl,
+        lc.scheduled_at AS scheduledAt,
+        lc.duration_minutes AS durationMinutes,
+        lc.created_at AS createdAt,
+        lc.updated_at AS updatedAt,
+        u.name AS hostName,
+        EXISTS(
+          SELECT 1
+          FROM live_class_registrations lcr
+          WHERE lcr.live_class_id = lc.id AND lcr.user_id = :viewerId
+        ) AS isRegistered,
+        (
+          SELECT COUNT(*)
+          FROM live_class_registrations lcr2
+          WHERE lcr2.live_class_id = lc.id
+        ) AS attendeeCount
+      FROM live_classes lc
+      JOIN users u ON u.id = lc.host_id
+      WHERE ${whereClause}
+    `,
+    { viewerId, ...params },
+  );
+
+  const sessions = rows.map((row) => mapLiveClassSummary(row, user));
+  const stateOrder = { live: 0, upcoming: 1, completed: 2 };
+
+  return sessions.sort((left, right) => {
+    const stateDelta = (stateOrder[left.sessionState] ?? 9) - (stateOrder[right.sessionState] ?? 9);
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    const leftTime = new Date(left.scheduledAt).getTime();
+    const rightTime = new Date(right.scheduledAt).getTime();
+    if (left.sessionState === "completed" && right.sessionState === "completed") {
+      return rightTime - leftTime;
+    }
+
+    return leftTime - rightTime;
+  });
+}
+
+async function getLiveClassRecord(liveClassId) {
+  return get(
+    `
+      SELECT
+        lc.id,
+        lc.title,
+        lc.description,
+        lc.category,
+        lc.host_id AS hostId,
+        lc.meeting_url AS meetingUrl,
+        lc.scheduled_at AS scheduledAt,
+        lc.duration_minutes AS durationMinutes,
+        lc.created_at AS createdAt,
+        lc.updated_at AS updatedAt,
+        u.name AS hostName
+      FROM live_classes lc
+      JOIN users u ON u.id = lc.host_id
+      WHERE lc.id = :liveClassId
+    `,
+    { liveClassId },
+  );
+}
+
+async function getLiveClassRegistration(userId, liveClassId) {
+  return get(
+    `
+      SELECT id, live_class_id AS liveClassId, user_id AS userId, registered_at AS registeredAt
+      FROM live_class_registrations
+      WHERE user_id = :userId AND live_class_id = :liveClassId
+    `,
+    { userId, liveClassId },
+  );
+}
+
+async function ensureLiveClassRegistration(userId, liveClassId) {
+  let registration = await getLiveClassRegistration(userId, liveClassId);
+  if (!registration) {
+    await run(
+      `
+        INSERT INTO live_class_registrations (live_class_id, user_id, registered_at)
+        VALUES (:liveClassId, :userId, :registeredAt)
+      `,
+      {
+        liveClassId,
+        userId,
+        registeredAt: nowIso(),
+      },
+    );
+    registration = await getLiveClassRegistration(userId, liveClassId);
+  }
+
+  return registration;
 }
 
 async function getEnrollment(userId, courseId) {
@@ -563,6 +732,34 @@ function attachManagedCourse(paramName = "id") {
   };
 }
 
+function attachManagedLiveClass(paramName = "id") {
+  return async (request, response, next) => {
+    try {
+      const liveClassId = toInt(request.params[paramName]);
+      if (!liveClassId) {
+        response.status(400).json({ message: "Invalid live class id." });
+        return;
+      }
+
+      const liveClass = await getLiveClassRecord(liveClassId);
+      if (!liveClass) {
+        response.status(404).json({ message: "Live class not found." });
+        return;
+      }
+
+      if (!canManageLiveClass(request.user, liveClass)) {
+        response.status(403).json({ message: "Only the session host or admin can do that." });
+        return;
+      }
+
+      request.liveClass = liveClass;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
 async function attachManagedLesson(request, response, next) {
   try {
     const lessonId = toInt(request.params.id);
@@ -604,11 +801,19 @@ module.exports = {
   notifyRole,
   notifyUser,
   notifyEnrolledLearners,
+  notifyLiveClassRegistrants,
   countAdmins,
   mapCourseSummary,
   listCourseSummaries,
   getCourseRecord,
   canManageCourse,
+  canManageLiveClass,
+  getLiveClassState,
+  mapLiveClassSummary,
+  listLiveClasses,
+  getLiveClassRecord,
+  getLiveClassRegistration,
+  ensureLiveClassRegistration,
   getEnrollment,
   ensureEnrollment,
   getCompletedLessonIds,
@@ -618,5 +823,6 @@ module.exports = {
   getCourseDetail,
   parseQuestionPayload,
   attachManagedCourse,
+  attachManagedLiveClass,
   attachManagedLesson,
 };

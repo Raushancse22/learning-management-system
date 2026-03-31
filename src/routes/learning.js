@@ -5,10 +5,15 @@ const { run, get, all, text, toInt, nowIso } = require("../db");
 const {
   buildDashboard,
   canManageCourse,
+  getLiveClassRecord,
+  getLiveClassRegistration,
+  getLiveClassState,
   ensureEnrollment,
+  ensureLiveClassRegistration,
   getCourseDetail,
   getCourseRecord,
   getEnrollment,
+  listLiveClasses,
   notifyUser,
 } = require("../services");
 
@@ -17,6 +22,72 @@ const router = express.Router();
 router.get("/dashboard", authRequired, async (request, response, next) => {
   try {
     response.json(await buildDashboard(request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/live-classes", authRequired, async (request, response, next) => {
+  try {
+    const classes = await listLiveClasses({
+      viewerId: request.user.id,
+      user: request.user,
+    });
+
+    response.json({ classes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/live-classes/:id/register", authRequired, async (request, response, next) => {
+  try {
+    const liveClassId = toInt(request.params.id);
+    if (!liveClassId) {
+      response.status(400).json({ message: "Invalid live class id." });
+      return;
+    }
+
+    if (request.user.role !== "student") {
+      response.status(403).json({ message: "Only students can register for live classes." });
+      return;
+    }
+
+    const liveClass = await getLiveClassRecord(liveClassId);
+    if (!liveClass) {
+      response.status(404).json({ message: "Live class not found." });
+      return;
+    }
+
+    if (getLiveClassState(liveClass.scheduledAt, liveClass.durationMinutes) === "completed") {
+      response.status(400).json({ message: "This live class has already ended." });
+      return;
+    }
+
+    const existingRegistration = await getLiveClassRegistration(request.user.id, liveClassId);
+    if (!existingRegistration) {
+      await ensureLiveClassRegistration(request.user.id, liveClassId);
+      const formattedTime = new Intl.DateTimeFormat("en-IN", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(liveClass.scheduledAt));
+
+      await notifyUser(
+        request.user.id,
+        "Live class seat confirmed",
+        `You are registered for ${liveClass.title} on ${formattedTime}.`,
+        "/live-classes",
+      );
+
+      await notifyUser(
+        Number(liveClass.hostId),
+        "New live class registration",
+        `${request.user.name} saved a seat for ${liveClass.title}.`,
+        "/live-classes",
+      );
+    }
+
+    response.status(201).json({ ok: true });
   } catch (error) {
     next(error);
   }
