@@ -19,6 +19,7 @@ A full working learning management system website built with:
 - MCQ quiz creation, submission, and auto evaluation
 - Progress tracking with completion percentage and resume learning
 - In-app notifications
+- Paid course checkout with sandbox fallback and Razorpay-ready live payments
 - Admin analytics and user management
 - One-command migration from local SQLite/uploads to cloud Postgres/Supabase Storage
 
@@ -67,6 +68,8 @@ To deploy:
    - `DATABASE_URL`
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`
+   - `RAZORPAY_KEY_ID`
+   - `RAZORPAY_KEY_SECRET`
    - `JWT_SECRET`
 4. Complete the deploy and then add your custom domain `gatemate.tech`
 
@@ -86,6 +89,8 @@ When `DATABASE_PROVIDER=postgres` and `STORAGE_PROVIDER=supabase`, the backend w
 - create the configured Supabase storage buckets if they do not exist
 - read and write all new LMS data from the cloud
 - store uploaded lesson videos and PDFs in Supabase Storage
+
+When `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` are set, paid courses use Razorpay Checkout for real payments. If they are missing, the LMS automatically falls back to the built-in sandbox checkout for demos and local testing.
 
 ## Migrate existing local data to cloud
 

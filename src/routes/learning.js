@@ -3,6 +3,13 @@ const express = require("express");
 const { authRequired } = require("../auth");
 const { run, get, all, text, toInt, nowIso, withTransaction } = require("../db");
 const {
+  createGatewayReceipt,
+  createRazorpayOrder,
+  getPaymentGateway,
+  getRazorpayCheckoutConfig,
+  verifyRazorpaySignature,
+} = require("../payments");
+const {
   buildDashboard,
   canManageCourse,
   getCoursePricing,
@@ -51,6 +58,16 @@ function maskUpiId(rawValue) {
 function createTransactionReference(orderId) {
   const timestamp = Date.now().toString().slice(-8);
   return `GMT-${orderId}-${timestamp}`;
+}
+
+function buildCheckoutProvider(order, course, user) {
+  if (text(order?.gateway) === "razorpay") {
+    return getRazorpayCheckoutConfig({ order, course, user });
+  }
+
+  return {
+    type: "sandbox",
+  };
 }
 
 function getPaymentPayload(request) {
@@ -103,6 +120,37 @@ function getPaymentPayload(request) {
     payerName,
     payerEmail,
     paymentDescriptor: `Netbanking ${bankName}`,
+  };
+}
+
+function getRazorpayConfirmationPayload(request, order) {
+  const razorpayPaymentId = text(request.body.razorpayPaymentId);
+  const razorpayOrderId = text(request.body.razorpayOrderId);
+  const razorpaySignature = text(request.body.razorpaySignature);
+  const payerName = text(request.body.payerName) || request.user.name;
+  const payerEmail = text(request.body.payerEmail) || request.user.email;
+  const paymentMethod = normalizePaymentMethod(request.body.paymentMethod);
+
+  if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
+    return { error: "Missing Razorpay payment verification details." };
+  }
+
+  if (!order.gatewayOrderId || razorpayOrderId !== order.gatewayOrderId) {
+    return { error: "The Razorpay order id does not match this purchase." };
+  }
+
+  if (!verifyRazorpaySignature({ orderId: order.gatewayOrderId, paymentId: razorpayPaymentId, signature: razorpaySignature })) {
+    return { error: "Razorpay signature verification failed." };
+  }
+
+  return {
+    gatewayPaymentId: razorpayPaymentId,
+    gatewayOrderId: razorpayOrderId,
+    gatewaySignature: razorpaySignature,
+    payerName,
+    payerEmail,
+    paymentMethod,
+    paymentDescriptor: "Razorpay secure checkout",
   };
 }
 
@@ -174,37 +222,131 @@ router.post("/courses/:id/checkout", authRequired, async (request, response, nex
     }
 
     const existingPendingOrder = await getLatestPaymentOrder(request.user.id, courseId, { statuses: ["pending"] });
-    if (existingPendingOrder) {
-      response.status(201).json({
-        order: await getPaymentOrder(Number(existingPendingOrder.id)),
-        course: await getCourseDetail(courseId, request.user),
-      });
-      return;
+    const gateway = getPaymentGateway();
+    const createdAt = nowIso();
+    const shouldReuseGatewayOrder =
+      existingPendingOrder &&
+      text(existingPendingOrder.gateway) === gateway &&
+      gateway !== "razorpay"
+        ? true
+        : existingPendingOrder &&
+            gateway === "razorpay" &&
+            text(existingPendingOrder.gateway) === "razorpay" &&
+            text(existingPendingOrder.gatewayOrderId) &&
+            Number(existingPendingOrder.amount || 0) === Number(pricing.priceAmount) &&
+            String(existingPendingOrder.currency || "INR").toUpperCase() === pricing.currency;
+
+    const orderId = existingPendingOrder
+      ? Number(existingPendingOrder.id)
+      : Number(
+          (
+            await run(
+              `
+                INSERT INTO payment_orders (
+                  user_id,
+                  course_id,
+                  amount,
+                  currency,
+                  status,
+                  gateway,
+                  payment_descriptor,
+                  created_at,
+                  updated_at
+                )
+                VALUES (
+                  :userId,
+                  :courseId,
+                  :amount,
+                  :currency,
+                  'pending',
+                  :gateway,
+                  :paymentDescriptor,
+                  :createdAt,
+                  :updatedAt
+                )
+              `,
+              {
+                userId: request.user.id,
+                courseId,
+                amount: pricing.priceAmount,
+                currency: pricing.currency,
+                gateway,
+                paymentDescriptor: gateway === "razorpay" ? "Razorpay secure checkout" : "Sandbox checkout",
+                createdAt,
+                updatedAt: createdAt,
+              },
+            )
+          ).lastInsertRowid,
+        );
+
+    if (existingPendingOrder && !shouldReuseGatewayOrder) {
+      await run(
+        `
+          UPDATE payment_orders
+          SET amount = :amount,
+              currency = :currency,
+              gateway = :gateway,
+              gateway_order_id = '',
+              gateway_payment_id = '',
+              gateway_signature = '',
+              gateway_receipt = '',
+              payment_method = '',
+              payment_descriptor = :paymentDescriptor,
+              payer_name = '',
+              payer_email = '',
+              transaction_reference = '',
+              failure_reason = '',
+              updated_at = :updatedAt
+          WHERE id = :orderId
+        `,
+        {
+          orderId,
+          amount: pricing.priceAmount,
+          currency: pricing.currency,
+          gateway,
+          paymentDescriptor: gateway === "razorpay" ? "Razorpay secure checkout" : "Sandbox checkout",
+          updatedAt: createdAt,
+        },
+      );
     }
 
-    const createdAt = nowIso();
-    const orderId = Number(
-      (
-        await run(
-          `
-            INSERT INTO payment_orders (user_id, course_id, amount, currency, status, created_at, updated_at)
-            VALUES (:userId, :courseId, :amount, :currency, 'pending', :createdAt, :updatedAt)
-          `,
-          {
-            userId: request.user.id,
-            courseId,
-            amount: pricing.priceAmount,
-            currency: pricing.currency,
-            createdAt,
-            updatedAt: createdAt,
-          },
-        )
-      ).lastInsertRowid,
-    );
+    if (gateway === "razorpay" && !shouldReuseGatewayOrder) {
+      const receipt = createGatewayReceipt(orderId, courseId, request.user.id);
+      const razorpayOrder = await createRazorpayOrder({
+        amount: pricing.priceAmount,
+        currency: pricing.currency,
+        receipt,
+        notes: {
+          internalOrderId: String(orderId),
+          courseId: String(courseId),
+          userId: String(request.user.id),
+        },
+      });
+
+      await run(
+        `
+          UPDATE payment_orders
+          SET gateway_order_id = :gatewayOrderId,
+              gateway_receipt = :gatewayReceipt,
+              updated_at = :updatedAt
+          WHERE id = :orderId
+        `,
+        {
+          orderId,
+          gatewayOrderId: text(razorpayOrder.id),
+          gatewayReceipt: text(razorpayOrder.receipt) || receipt,
+          updatedAt: nowIso(),
+        },
+      );
+    }
+
+    const order = await getPaymentOrder(orderId);
+    const courseDetail = await getCourseDetail(courseId, request.user);
 
     response.status(201).json({
-      order: await getPaymentOrder(orderId),
-      course: await getCourseDetail(courseId, request.user),
+      order,
+      course: courseDetail,
+      provider: buildCheckoutProvider(order, courseDetail.course, request.user),
     });
   } catch (error) {
     next(error);
@@ -239,7 +381,8 @@ router.post("/payments/orders/:id/confirm", authRequired, async (request, respon
       return;
     }
 
-    const paymentPayload = getPaymentPayload(request);
+    const isRazorpayOrder = text(order.gateway) === "razorpay";
+    const paymentPayload = isRazorpayOrder ? getRazorpayConfirmationPayload(request, order) : getPaymentPayload(request);
     if (paymentPayload.error) {
       response.status(400).json({ message: paymentPayload.error });
       return;
@@ -250,6 +393,8 @@ router.post("/payments/orders/:id/confirm", authRequired, async (request, respon
         `
           UPDATE payment_orders
           SET status = 'paid',
+              gateway_payment_id = :gatewayPaymentId,
+              gateway_signature = :gatewaySignature,
               payment_method = :paymentMethod,
               payment_descriptor = :paymentDescriptor,
               payer_name = :payerName,
@@ -262,11 +407,13 @@ router.post("/payments/orders/:id/confirm", authRequired, async (request, respon
         `,
         {
           orderId,
+          gatewayPaymentId: paymentPayload.gatewayPaymentId || "",
+          gatewaySignature: paymentPayload.gatewaySignature || "",
           paymentMethod: paymentPayload.paymentMethod,
           paymentDescriptor: paymentPayload.paymentDescriptor,
           payerName: paymentPayload.payerName,
           payerEmail: paymentPayload.payerEmail,
-          transactionReference: createTransactionReference(orderId),
+          transactionReference: paymentPayload.gatewayPaymentId || createTransactionReference(orderId),
           updatedAt: nowIso(),
           paidAt: nowIso(),
         },

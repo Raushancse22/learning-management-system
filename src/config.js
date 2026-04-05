@@ -30,6 +30,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_VIDEOS_BUCKET = process.env.SUPABASE_VIDEOS_BUCKET || "lesson-videos";
 const SUPABASE_MATERIALS_BUCKET = process.env.SUPABASE_MATERIALS_BUCKET || "study-materials";
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
+const RAZORPAY_THEME_COLOR = process.env.RAZORPAY_THEME_COLOR || "#0f766e";
 
 module.exports = {
   ROOT_DIR,
@@ -48,6 +51,10 @@ module.exports = {
   SUPABASE_SERVICE_ROLE_KEY,
   SUPABASE_VIDEOS_BUCKET,
   SUPABASE_MATERIALS_BUCKET,
+  RAZORPAY_KEY_ID,
+  RAZORPAY_KEY_SECRET,
+  RAZORPAY_THEME_COLOR,
   isPostgres: DATABASE_PROVIDER === "postgres",
   isSupabaseStorage: STORAGE_PROVIDER === "supabase",
+  isRazorpayConfigured: Boolean(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET),
 };

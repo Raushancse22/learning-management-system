@@ -137,6 +137,11 @@ const SQLITE_SCHEMA = `
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL DEFAULT 'INR',
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed')),
+    gateway TEXT NOT NULL DEFAULT 'sandbox',
+    gateway_order_id TEXT DEFAULT '',
+    gateway_payment_id TEXT DEFAULT '',
+    gateway_signature TEXT DEFAULT '',
+    gateway_receipt TEXT DEFAULT '',
     payment_method TEXT DEFAULT '' CHECK (payment_method IN ('', 'card', 'upi', 'netbanking')),
     payment_descriptor TEXT DEFAULT '',
     payer_name TEXT DEFAULT '',
@@ -282,6 +287,11 @@ const POSTGRES_SCHEMA = `
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL DEFAULT 'INR',
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed')),
+    gateway TEXT NOT NULL DEFAULT 'sandbox',
+    gateway_order_id TEXT DEFAULT '',
+    gateway_payment_id TEXT DEFAULT '',
+    gateway_signature TEXT DEFAULT '',
+    gateway_receipt TEXT DEFAULT '',
     payment_method TEXT DEFAULT '' CHECK (payment_method IN ('', 'card', 'upi', 'netbanking')),
     payment_descriptor TEXT DEFAULT '',
     payer_name TEXT DEFAULT '',
@@ -498,10 +508,51 @@ function slugify(value) {
 async function initializeDatabase() {
   if (isPostgres) {
     await pool.query(POSTGRES_SCHEMA);
+    await ensurePaymentOrderSchema();
     return;
   }
 
   db.exec(SQLITE_SCHEMA);
+  await ensurePaymentOrderSchema();
+}
+
+async function hasColumn(tableName, columnName) {
+  if (isPostgres) {
+    const row = await get(
+      `
+        SELECT 1 AS present
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = :tableName
+          AND column_name = :columnName
+      `,
+      {
+        tableName,
+        columnName,
+      },
+    );
+
+    return Boolean(row?.present);
+  }
+
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return rows.some((row) => String(row.name || "").toLowerCase() === String(columnName).toLowerCase());
+}
+
+async function ensureColumn(tableName, columnName, definition) {
+  if (await hasColumn(tableName, columnName)) {
+    return;
+  }
+
+  await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
+async function ensurePaymentOrderSchema() {
+  await ensureColumn("payment_orders", "gateway", "TEXT NOT NULL DEFAULT 'sandbox'");
+  await ensureColumn("payment_orders", "gateway_order_id", "TEXT DEFAULT ''");
+  await ensureColumn("payment_orders", "gateway_payment_id", "TEXT DEFAULT ''");
+  await ensureColumn("payment_orders", "gateway_signature", "TEXT DEFAULT ''");
+  await ensureColumn("payment_orders", "gateway_receipt", "TEXT DEFAULT ''");
 }
 
 module.exports = {

@@ -22,8 +22,33 @@ function createInitialForm(user) {
   };
 }
 
+function loadScript(source) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${source}"]`);
+    if (existing) {
+      if (window.Razorpay) {
+        resolve();
+        return;
+      }
+
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Failed to load checkout script.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = source;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load checkout script."));
+    document.body.appendChild(script);
+  });
+}
+
 export default function PaymentModal({ checkout, user, busyAction, onClose, onConfirm }) {
   const [form, setForm] = useState(() => createInitialForm(user));
+  const [gatewayState, setGatewayState] = useState("idle");
+  const [gatewayError, setGatewayError] = useState("");
 
   useEffect(() => {
     if (!checkout) {
@@ -31,7 +56,45 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
     }
 
     setForm(createInitialForm(user));
+    setGatewayError("");
   }, [checkout, user]);
+
+  const providerType = checkout?.provider?.type || "sandbox";
+  const isRazorpayCheckout = providerType === "razorpay";
+
+  useEffect(() => {
+    if (!checkout || !isRazorpayCheckout) {
+      setGatewayState("idle");
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function prepareGateway() {
+      if (window.Razorpay) {
+        setGatewayState("ready");
+        return;
+      }
+
+      setGatewayState("loading");
+      try {
+        await loadScript(checkout.provider.scriptUrl || "https://checkout.razorpay.com/v1/checkout.js");
+        if (!cancelled) {
+          setGatewayState(window.Razorpay ? "ready" : "error");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setGatewayState("error");
+          setGatewayError(error.message || "Unable to load Razorpay right now.");
+        }
+      }
+    }
+
+    prepareGateway();
+    return () => {
+      cancelled = true;
+    };
+  }, [checkout, isRazorpayCheckout]);
 
   if (!checkout?.course || !checkout?.order) {
     return null;
@@ -39,6 +102,55 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
 
   const { course, order } = checkout;
   const isSubmitting = busyAction === "confirm-payment";
+
+  function openRazorpayCheckout() {
+    if (!window.Razorpay || !checkout.provider?.keyId || !checkout.provider?.razorpayOrderId) {
+      setGatewayError("Razorpay is not ready yet. Refresh and try again in a moment.");
+      return;
+    }
+
+    setGatewayError("");
+
+    const instance = new window.Razorpay({
+      key: checkout.provider.keyId,
+      amount: checkout.provider.amountSubunits,
+      currency: checkout.provider.currency || order.currency,
+      name: checkout.provider.businessName || "Gatemate Learning",
+      description: checkout.provider.description || `Purchase access to ${course.title}`,
+      order_id: checkout.provider.razorpayOrderId,
+      prefill: {
+        name: form.payerName || checkout.provider.prefill?.name || "",
+        email: form.payerEmail || checkout.provider.prefill?.email || "",
+      },
+      notes: {
+        course_title: course.title,
+        internal_order_id: String(order.id),
+      },
+      theme: {
+        color: checkout.provider.themeColor || "#0f766e",
+      },
+      handler: (response) => {
+        onConfirm(order.id, {
+          paymentMethod: form.paymentMethod,
+          payerName: form.payerName,
+          payerEmail: form.payerEmail,
+          razorpayPaymentId: response.razorpay_payment_id,
+          razorpayOrderId: response.razorpay_order_id,
+          razorpaySignature: response.razorpay_signature,
+        });
+      },
+      modal: {
+        ondismiss: () => {
+          setGatewayError("Checkout was closed before the payment finished.");
+        },
+      },
+    });
+
+    instance.on("payment.failed", (event) => {
+      setGatewayError(event?.error?.description || "Payment failed in Razorpay. Please try again.");
+    });
+    instance.open();
+  }
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
@@ -75,8 +187,10 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
                   </p>
                 </div>
               </div>
-              <div className="rounded-3xl border border-amber-400/20 bg-amber-400/10 p-4 text-amber-100">
-                This is an in-app sandbox checkout flow for the website demo. No real bank charge is processed.
+              <div className="rounded-3xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-emerald-100">
+                {isRazorpayCheckout
+                  ? "Payments are handled by Razorpay secure checkout. Learners can choose UPI, cards, or netbanking in the next step."
+                  : "This is an in-app sandbox checkout flow for the website demo. No real bank charge is processed."}
               </div>
             </div>
           </div>
@@ -84,35 +198,20 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
           <div className="p-8">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-teal-700">Payment Details</p>
-              <h3 className="mt-3 text-3xl text-slate-900">Choose a payment method</h3>
-            </div>
-
-            <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              {paymentMethods.map((method) => {
-                const Icon = method.icon;
-                const active = form.paymentMethod === method.id;
-
-                return (
-                  <button
-                    key={method.id}
-                    className={classNames(
-                      "interactive-soft rounded-3xl border px-4 py-4 text-left",
-                      active ? "border-teal-500 bg-teal-50 text-teal-900" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
-                    )}
-                    type="button"
-                    onClick={() => setForm((current) => ({ ...current, paymentMethod: method.id }))}
-                  >
-                    <Icon className="text-lg" />
-                    <p className="mt-4 font-semibold">{method.label}</p>
-                  </button>
-                );
-              })}
+              <h3 className="mt-3 text-3xl text-slate-900">
+                {isRazorpayCheckout ? "Continue with Razorpay" : "Choose a payment method"}
+              </h3>
             </div>
 
             <form
               className="mt-8 space-y-4"
               onSubmit={(event) => {
                 event.preventDefault();
+                if (isRazorpayCheckout) {
+                  openRazorpayCheckout();
+                  return;
+                }
+
                 onConfirm(order.id, form);
               }}
             >
@@ -132,7 +231,37 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
                 />
               </div>
 
-              {form.paymentMethod === "card" ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                {paymentMethods.map((method) => {
+                  const Icon = method.icon;
+                  const active = form.paymentMethod === method.id;
+
+                  return (
+                    <button
+                      key={method.id}
+                      className={classNames(
+                        "interactive-soft rounded-3xl border px-4 py-4 text-left",
+                        active ? "border-teal-500 bg-teal-50 text-teal-900" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        isRazorpayCheckout ? "opacity-90" : "",
+                      )}
+                      type="button"
+                      onClick={() => setForm((current) => ({ ...current, paymentMethod: method.id }))}
+                    >
+                      <Icon className="text-lg" />
+                      <p className="mt-4 font-semibold">{method.label}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {isRazorpayCheckout ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm leading-7 text-slate-600">
+                  Razorpay will open a secure payment window using the order created by the LMS backend. The selected chip above is only a
+                  preference hint for your checkout session.
+                </div>
+              ) : null}
+
+              {!isRazorpayCheckout && form.paymentMethod === "card" ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   <input
                     className="field sm:col-span-2"
@@ -157,7 +286,7 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
                 </div>
               ) : null}
 
-              {form.paymentMethod === "upi" ? (
+              {!isRazorpayCheckout && form.paymentMethod === "upi" ? (
                 <input
                   className="field"
                   placeholder="UPI ID"
@@ -166,7 +295,7 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
                 />
               ) : null}
 
-              {form.paymentMethod === "netbanking" ? (
+              {!isRazorpayCheckout && form.paymentMethod === "netbanking" ? (
                 <input
                   className="field"
                   placeholder="Bank name"
@@ -175,9 +304,21 @@ export default function PaymentModal({ checkout, user, busyAction, onClose, onCo
                 />
               ) : null}
 
+              {gatewayError ? <p className="text-sm font-medium text-rose-600">{gatewayError}</p> : null}
+
               <div className="flex flex-wrap gap-3 pt-2">
-                <button className="button-primary" type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Processing..." : `Pay ${formatCurrency(order.amount, order.currency)}`}
+                <button
+                  className="button-primary"
+                  type="submit"
+                  disabled={isSubmitting || (isRazorpayCheckout && gatewayState === "loading")}
+                >
+                  {isSubmitting
+                    ? "Processing..."
+                    : isRazorpayCheckout
+                      ? gatewayState === "loading"
+                        ? "Preparing secure checkout..."
+                        : `Pay ${formatCurrency(order.amount, order.currency)} with Razorpay`
+                      : `Pay ${formatCurrency(order.amount, order.currency)}`}
                 </button>
                 <button className="button-secondary" type="button" onClick={onClose}>
                   Cancel

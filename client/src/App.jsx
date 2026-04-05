@@ -481,6 +481,7 @@ export default function App() {
         setCheckout({
           order: response.order,
           course: response.course?.course || catalog.find((entry) => entry.id === courseId) || null,
+          provider: response.provider || { type: "sandbox" },
         });
         return true;
       } catch (error) {
