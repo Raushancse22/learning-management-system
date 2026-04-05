@@ -154,6 +154,42 @@ async function upsertCourse({ title, legacyTitle, description, category, introTe
   );
 }
 
+async function upsertCoursePricing({ courseId, priceAmount, currency = "INR", updatedAt }) {
+  const existing = await get("SELECT id FROM course_pricing WHERE course_id = :courseId LIMIT 1", { courseId });
+
+  if (existing) {
+    await run(
+      `
+        UPDATE course_pricing
+        SET price_amount = :priceAmount,
+            currency = :currency,
+            updated_at = :updatedAt
+        WHERE course_id = :courseId
+      `,
+      {
+        courseId,
+        priceAmount,
+        currency,
+        updatedAt,
+      },
+    );
+    return;
+  }
+
+  await run(
+    `
+      INSERT INTO course_pricing (course_id, price_amount, currency, updated_at)
+      VALUES (:courseId, :priceAmount, :currency, :updatedAt)
+    `,
+    {
+      courseId,
+      priceAmount,
+      currency,
+      updatedAt,
+    },
+  );
+}
+
 async function upsertLesson({ courseId, position, title, summary, videoType, videoUrl, materialPath, createdAt }) {
   const existing = await get(
     `
@@ -397,6 +433,103 @@ async function ensureLiveClassRegistration({ liveClassId, userId, registeredAt }
   );
 }
 
+async function upsertPaidOrder({ userId, courseId, amount, currency = "INR", paymentMethod, paymentDescriptor, payerName, payerEmail, createdAt }) {
+  const existing = await get(
+    `
+      SELECT id
+      FROM payment_orders
+      WHERE user_id = :userId
+        AND course_id = :courseId
+        AND status = 'paid'
+      LIMIT 1
+    `,
+    {
+      userId,
+      courseId,
+    },
+  );
+
+  if (existing) {
+    await run(
+      `
+        UPDATE payment_orders
+        SET amount = :amount,
+            currency = :currency,
+            payment_method = :paymentMethod,
+            payment_descriptor = :paymentDescriptor,
+            payer_name = :payerName,
+            payer_email = :payerEmail,
+            transaction_reference = :transactionReference,
+            updated_at = :updatedAt,
+            paid_at = :paidAt
+        WHERE id = :orderId
+      `,
+      {
+        orderId: Number(existing.id),
+        amount,
+        currency,
+        paymentMethod,
+        paymentDescriptor,
+        payerName,
+        payerEmail,
+        transactionReference: `SEED-${courseId}-${userId}`,
+        updatedAt: createdAt,
+        paidAt: createdAt,
+      },
+    );
+    return;
+  }
+
+  await run(
+    `
+      INSERT INTO payment_orders (
+        user_id,
+        course_id,
+        amount,
+        currency,
+        status,
+        payment_method,
+        payment_descriptor,
+        payer_name,
+        payer_email,
+        transaction_reference,
+        created_at,
+        updated_at,
+        paid_at
+      )
+      VALUES (
+        :userId,
+        :courseId,
+        :amount,
+        :currency,
+        'paid',
+        :paymentMethod,
+        :paymentDescriptor,
+        :payerName,
+        :payerEmail,
+        :transactionReference,
+        :createdAt,
+        :updatedAt,
+        :paidAt
+      )
+    `,
+    {
+      userId,
+      courseId,
+      amount,
+      currency,
+      paymentMethod,
+      paymentDescriptor,
+      payerName,
+      payerEmail,
+      transactionReference: `SEED-${courseId}-${userId}`,
+      createdAt,
+      updatedAt: createdAt,
+      paidAt: createdAt,
+    },
+  );
+}
+
 async function syncDemoContent() {
   const createdAt = nowIso();
 
@@ -441,6 +574,27 @@ async function syncDemoContent() {
     instructorId,
     status: "pending",
     createdAt,
+  });
+
+  await upsertCoursePricing({
+    courseId: generativeAiCourseId,
+    priceAmount: 3499,
+    currency: "INR",
+    updatedAt: createdAt,
+  });
+
+  await upsertCoursePricing({
+    courseId: cppCourseId,
+    priceAmount: 2499,
+    currency: "INR",
+    updatedAt: createdAt,
+  });
+
+  await upsertCoursePricing({
+    courseId: pendingCourseId,
+    priceAmount: 1999,
+    currency: "INR",
+    updatedAt: createdAt,
   });
 
   const aiLiveClassId = await upsertLiveClass({
@@ -600,12 +754,33 @@ async function syncDemoContent() {
     registeredAt: createdAt,
   });
 
+  await upsertPaidOrder({
+    userId: studentId,
+    courseId: generativeAiCourseId,
+    amount: 3499,
+    currency: "INR",
+    paymentMethod: "upi",
+    paymentDescriptor: "UPI gat***@upi",
+    payerName: demoUsers.student.name,
+    payerEmail: demoUsers.student.email,
+    createdAt,
+  });
+
   await upsertNotification({
     userId: studentId,
     title: "Welcome to Gatemate Learning",
     legacyTitle: "Welcome to LearnSphere",
     message:
       "Your demo learner account is enrolled in Generative AI Mastery so you can test progress tracking right away.",
+    link: `/learn/${generativeAiCourseId}`,
+    createdAt,
+  });
+
+  await upsertNotification({
+    userId: studentId,
+    title: "Payment received",
+    legacyTitle: "Payment received",
+    message: "Your Generative AI Mastery purchase is already completed in the demo account, so you can test paid-course access immediately.",
     link: `/learn/${generativeAiCourseId}`,
     createdAt,
   });

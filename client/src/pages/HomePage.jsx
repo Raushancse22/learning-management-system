@@ -12,6 +12,8 @@ import {
   FaUsers,
 } from "react-icons/fa";
 
+import { formatCurrency } from "../lib/format";
+
 const trustSignals = [
   { label: "Active learners", value: "12k+" },
   { label: "Structured modules", value: "250+" },
@@ -365,6 +367,9 @@ export default function HomePage({ catalog, user, loading }) {
                   </span>
                   <h3 className="mt-4 text-[1.45rem] leading-8 text-slate-900">{course.title}</h3>
                   <p className="mt-3 flex-1 text-sm leading-7 text-slate-600">{course.description}</p>
+                  <div className="mt-5 text-sm font-semibold text-slate-700">
+                    {course.isPaid ? formatCurrency(course.priceAmount, course.currency) : "Free access"}
+                  </div>
                   <div className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
                     Open course page
                     <FaArrowRight />

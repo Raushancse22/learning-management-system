@@ -1,6 +1,8 @@
 import React from "react";
 import { FaChartPie, FaCheckCircle, FaHourglassHalf, FaUsers } from "react-icons/fa";
 
+import { formatCurrency } from "../lib/format";
+
 function StatCard({ label, value, accent, icon }) {
   return (
     <div className="metric-card">
@@ -25,8 +27,8 @@ export default function AdminPanel({
   if (loading) {
     return (
       <section className="space-y-6">
-        <div className="grid gap-6 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
+        <div className="grid gap-6 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
             <div key={index} className="skeleton-surface p-6">
               <div className="flex items-center justify-between">
                 <div className="skeleton-line h-4 w-20" />
@@ -79,7 +81,7 @@ export default function AdminPanel({
 
   return (
     <section className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-4">
+      <div className="grid gap-6 lg:grid-cols-5">
         <StatCard label="Users" value={analytics.stats.totalUsers} accent="bg-teal-100 text-teal-700" icon={<FaUsers />} />
         <StatCard label="Courses" value={analytics.stats.totalCourses} accent="bg-amber-100 text-amber-700" icon={<FaChartPie />} />
         <StatCard label="Pending" value={analytics.stats.pendingCourses} accent="bg-sky-100 text-sky-700" icon={<FaHourglassHalf />} />
@@ -89,6 +91,7 @@ export default function AdminPanel({
           accent="bg-emerald-100 text-emerald-700"
           icon={<FaCheckCircle />}
         />
+        <StatCard label="Revenue" value={formatCurrency(analytics.stats.revenue || 0)} accent="bg-emerald-100 text-emerald-700" icon={<FaCheckCircle />} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">

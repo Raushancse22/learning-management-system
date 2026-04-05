@@ -25,7 +25,7 @@ import CatalogPanel from "./CatalogPanel";
 import CourseWorkspace from "./CourseWorkspace";
 import InstructorStudio from "./InstructorStudio";
 import LiveClassesPanel from "./LiveClassesPanel";
-import { formatDate, formatPercent } from "../lib/format";
+import { formatCurrency, formatDate, formatPercent } from "../lib/format";
 
 const curatedRecommendationLibrary = [
   {
@@ -195,9 +195,10 @@ function ProgressDistribution({ items }) {
   );
 }
 
-function RecommendationCard({ recommendation, busyAction, onEnroll, onOpenCourse, onNavigateCatalog }) {
+function RecommendationCard({ recommendation, busyAction, onEnroll, onPurchase, onOpenCourse, onNavigateCatalog }) {
   const isCatalogCourse = recommendation.kind === "catalog";
   const enrollBusy = isCatalogCourse && busyAction === `enroll:${recommendation.id}`;
+  const purchaseBusy = isCatalogCourse && busyAction === `checkout:${recommendation.id}`;
 
   return (
     <article className="interactive-card relative overflow-hidden rounded-[28px] border border-slate-200/80 bg-white p-5">
@@ -219,7 +220,7 @@ function RecommendationCard({ recommendation, busyAction, onEnroll, onOpenCourse
         {isCatalogCourse ? (
           <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
             <span>{recommendation.lessonCount} lessons</span>
-            <span>{recommendation.enrollmentCount} learners</span>
+            <span>{recommendation.isPaid ? formatCurrency(recommendation.priceAmount, recommendation.currency) : `${recommendation.enrollmentCount} learners`}</span>
           </div>
         ) : null}
 
@@ -229,9 +230,16 @@ function RecommendationCard({ recommendation, busyAction, onEnroll, onOpenCourse
               <button className="button-secondary" type="button" onClick={() => onOpenCourse(recommendation.id)}>
                 Open Course
               </button>
-              <button className="button-primary" type="button" disabled={enrollBusy} onClick={() => onEnroll(recommendation.id)}>
+              <button
+                className="button-primary"
+                type="button"
+                disabled={recommendation.isPaid ? purchaseBusy : enrollBusy}
+                onClick={() => (recommendation.isPaid ? onPurchase(recommendation.id) : onEnroll(recommendation.id))}
+              >
                 <FaPlayCircle />
-                <span>{enrollBusy ? "Joining..." : "Enroll"}</span>
+                <span>
+                  {recommendation.isPaid ? (purchaseBusy ? "Opening..." : "Buy Now") : enrollBusy ? "Joining..." : "Enroll"}
+                </span>
               </button>
             </>
           ) : (
@@ -268,7 +276,36 @@ function NotificationList({ notifications }) {
   );
 }
 
-function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnroll, onNavigateCatalog }) {
+function PaymentActivityList({ title, items, emptyCopy }) {
+  return (
+    <div className="section-card p-6">
+      <h2 className="text-2xl text-slate-900">{title}</h2>
+      <div className="mt-6 space-y-4">
+        {items?.length ? (
+          items.map((entry) => (
+            <div key={entry.id} className="interactive-soft rounded-3xl bg-stone-100 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-semibold text-slate-900">{entry.courseTitle}</p>
+                  <p className="mt-1 text-sm text-slate-500">{entry.paymentDescriptor || entry.userName || entry.payerName}</p>
+                </div>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">
+                  {formatCurrency(entry.amount, entry.currency)}
+                </span>
+              </div>
+              <p className="mt-3 text-sm text-slate-700">{entry.transactionReference || entry.status}</p>
+              <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate-400">{formatDate(entry.paidAt || entry.createdAt)}</p>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-3xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">{emptyCopy}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnroll, onPurchase, onNavigateCatalog }) {
   const courses = dashboard?.courses || [];
   const completedCourses = courses.filter((course) => course.progressPercent === 100).length;
   const pendingCourses = Math.max(courses.length - completedCourses, 0);
@@ -296,6 +333,7 @@ function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnrol
   const averageScore = dashboard?.stats?.averageScore || 0;
   const streak = dashboard?.stats?.streak || 0;
   const recentAttempts = dashboard?.recentAttempts || [];
+  const recentPayments = dashboard?.recentPayments || [];
   const momentumSeries = useMemo(
     () =>
       buildMomentumSeries({
@@ -369,7 +407,7 @@ function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnrol
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-4">
+      <div className="grid gap-6 xl:grid-cols-5">
         <MetricCard
           label="Courses Enrolled"
           value={dashboard?.stats?.enrolledCourses || 0}
@@ -401,6 +439,14 @@ function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnrol
           meta="Keep momentum alive by resuming one lesson today."
           icon={<FaBolt />}
           iconTone="bg-sky-100 text-sky-700"
+        />
+        <MetricCard
+          label="Total Spend"
+          value={formatCurrency(dashboard?.stats?.totalSpend || 0)}
+          accent="text-emerald-600"
+          meta="Your paid courses and unlocked learning library so far."
+          icon={<FaMedal />}
+          iconTone="bg-emerald-100 text-emerald-700"
         />
       </div>
 
@@ -586,6 +632,7 @@ function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnrol
                 recommendation={recommendation}
                 busyAction={busyAction}
                 onEnroll={onEnroll}
+                onPurchase={onPurchase}
                 onOpenCourse={onOpenCourse}
                 onNavigateCatalog={onNavigateCatalog}
               />
@@ -594,7 +641,12 @@ function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnrol
         </section>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
+      <div className="grid gap-6 xl:grid-cols-[0.95fr,0.95fr,0.9fr]">
+        <PaymentActivityList
+          title="Recent Payments"
+          items={recentPayments}
+          emptyCopy="Completed course purchases will appear here once you unlock paid tracks."
+        />
         <div className="section-card p-6">
           <h2 className="text-2xl text-slate-900">Recent Quiz Attempts</h2>
           <div className="mt-6 space-y-4">
@@ -638,12 +690,13 @@ function StudentOverview({ dashboard, catalog, busyAction, onOpenCourse, onEnrol
 function InstructorOverview({ dashboard, onOpenCourse }) {
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-5">
+      <div className="grid gap-6 md:grid-cols-6">
         <MetricCard label="Courses" value={dashboard?.stats?.totalCourses || 0} accent="text-slate-900" />
         <MetricCard label="Approved" value={dashboard?.stats?.approvedCourses || 0} accent="text-emerald-600" />
         <MetricCard label="Pending" value={dashboard?.stats?.pendingCourses || 0} accent="text-amber-600" />
         <MetricCard label="Learners" value={dashboard?.stats?.learners || 0} accent="text-sky-600" />
         <MetricCard label="Lessons" value={dashboard?.stats?.lessons || 0} accent="text-teal-600" />
+        <MetricCard label="Revenue" value={formatCurrency(dashboard?.stats?.revenue || 0)} accent="text-emerald-600" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
@@ -672,19 +725,20 @@ function InstructorOverview({ dashboard, onOpenCourse }) {
         </div>
 
         <div className="section-card p-6">
-          <h2 className="text-2xl text-slate-900">Recent Enrollments</h2>
+          <h2 className="text-2xl text-slate-900">Recent Sales</h2>
           <div className="mt-6 space-y-4">
-            {dashboard?.recentEnrollments?.length ? (
-              dashboard.recentEnrollments.map((entry, index) => (
-                <div key={`${entry.studentName}-${index}`} className="interactive-soft rounded-3xl bg-stone-100 p-4">
-                  <p className="font-semibold text-slate-900">{entry.studentName}</p>
-                  <p className="mt-1 text-sm text-slate-500">Joined {entry.courseTitle}</p>
-                  <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-400">{formatDate(entry.enrolledAt)}</p>
+            {dashboard?.recentSales?.length ? (
+              dashboard.recentSales.map((entry) => (
+                <div key={entry.id} className="interactive-soft rounded-3xl bg-stone-100 p-4">
+                  <p className="font-semibold text-slate-900">{entry.userName}</p>
+                  <p className="mt-1 text-sm text-slate-500">{entry.courseTitle}</p>
+                  <p className="mt-3 text-sm font-semibold text-emerald-700">{formatCurrency(entry.amount, entry.currency)}</p>
+                  <p className="mt-2 text-xs uppercase tracking-[0.2em] text-slate-400">{formatDate(entry.paidAt || entry.createdAt)}</p>
                 </div>
               ))
             ) : (
               <div className="rounded-3xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
-                New learner enrollments will appear here once students join your courses.
+                Paid course sales will appear here once learners complete checkout.
               </div>
             )}
           </div>
@@ -704,11 +758,12 @@ function InstructorOverview({ dashboard, onOpenCourse }) {
 function AdminOverview({ dashboard, onOpenCourse }) {
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-4">
+      <div className="grid gap-6 md:grid-cols-5">
         <MetricCard label="Users" value={dashboard?.stats?.totalUsers || 0} accent="text-slate-900" />
         <MetricCard label="Courses" value={dashboard?.stats?.totalCourses || 0} accent="text-sky-600" />
         <MetricCard label="Pending" value={dashboard?.stats?.pendingCourses || 0} accent="text-amber-600" />
         <MetricCard label="Enrollments" value={dashboard?.stats?.enrollments || 0} accent="text-emerald-600" />
+        <MetricCard label="Revenue" value={formatCurrency(dashboard?.stats?.revenue || 0)} accent="text-emerald-600" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr,1fr]">
@@ -775,12 +830,20 @@ function ProfilePanel({ user, dashboard }) {
         </div>
       </div>
 
-      <div className="section-card p-6">
-        <h2 className="text-2xl text-slate-900">Notifications</h2>
-        <div className="mt-6">
-          <NotificationList notifications={dashboard?.notifications || []} />
+      {user.role === "student" ? (
+        <PaymentActivityList
+          title="Payment History"
+          items={dashboard?.recentPayments || []}
+          emptyCopy="Course payments will appear here after your first successful checkout."
+        />
+      ) : (
+        <div className="section-card p-6">
+          <h2 className="text-2xl text-slate-900">Notifications</h2>
+          <div className="mt-6">
+            <NotificationList notifications={dashboard?.notifications || []} />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -855,6 +918,7 @@ export default function Dashboard({
   onFilterChange,
   onOpenCourse,
   onEnroll,
+  onPurchase,
   onSelectLesson,
   onCompleteLesson,
   onSubmitQuiz,
@@ -915,6 +979,7 @@ export default function Dashboard({
           busyAction={busyAction}
           onOpenCourse={onOpenCourse}
           onEnroll={onEnroll}
+          onPurchase={onPurchase}
           onNavigateCatalog={() => onNavigate("catalog")}
         />
       );
@@ -937,6 +1002,7 @@ export default function Dashboard({
         onFilterChange={onFilterChange}
         onOpenCourse={onOpenCourse}
         onEnroll={onEnroll}
+        onPurchase={onPurchase}
       />
     );
   } else if (activeView === "liveClasses") {
@@ -962,6 +1028,7 @@ export default function Dashboard({
         onCompleteLesson={onCompleteLesson}
         onSubmitQuiz={onSubmitQuiz}
         onEnroll={onEnroll}
+        onPurchase={onPurchase}
         loading={courseLoading}
       />
     );

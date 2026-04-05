@@ -1,27 +1,297 @@
 const express = require("express");
 
 const { authRequired } = require("../auth");
-const { run, get, all, text, toInt, nowIso } = require("../db");
+const { run, get, all, text, toInt, nowIso, withTransaction } = require("../db");
 const {
   buildDashboard,
   canManageCourse,
+  getCoursePricing,
+  getLatestPaymentOrder,
   getLiveClassRecord,
   getLiveClassRegistration,
   getLiveClassState,
+  getPaidCoursePurchase,
+  getPaymentOrder,
   ensureEnrollment,
   ensureLiveClassRegistration,
   getCourseDetail,
   getCourseRecord,
   getEnrollment,
   listLiveClasses,
+  listPaymentRecords,
   notifyUser,
 } = require("../services");
 
 const router = express.Router();
 
+function normalizePaymentMethod(value) {
+  const method = text(value).toLowerCase();
+  return ["card", "upi", "netbanking"].includes(method) ? method : "";
+}
+
+function maskCardNumber(rawValue) {
+  const digits = String(rawValue || "").replace(/\D/g, "");
+  if (digits.length < 12) {
+    return "";
+  }
+
+  return `Card ending ${digits.slice(-4)}`;
+}
+
+function maskUpiId(rawValue) {
+  const upiId = text(rawValue);
+  if (!upiId.includes("@")) {
+    return "";
+  }
+
+  const [handle, provider] = upiId.split("@");
+  return `${handle.slice(0, 3)}***@${provider}`;
+}
+
+function createTransactionReference(orderId) {
+  const timestamp = Date.now().toString().slice(-8);
+  return `GMT-${orderId}-${timestamp}`;
+}
+
+function getPaymentPayload(request) {
+  const paymentMethod = normalizePaymentMethod(request.body.paymentMethod);
+  const payerName = text(request.body.payerName) || request.user.name;
+  const payerEmail = text(request.body.payerEmail) || request.user.email;
+
+  if (!paymentMethod || !payerName || !payerEmail) {
+    return { error: "Payment method, payer name, and payer email are required." };
+  }
+
+  if (paymentMethod === "card") {
+    const descriptor = maskCardNumber(request.body.cardNumber);
+    const expiry = text(request.body.expiry);
+    const cvv = String(request.body.cvv || "").replace(/\D/g, "");
+
+    if (!descriptor || !expiry || cvv.length < 3) {
+      return { error: "Enter a valid card number, expiry, and CVV for card checkout." };
+    }
+
+    return {
+      paymentMethod,
+      payerName,
+      payerEmail,
+      paymentDescriptor: descriptor,
+    };
+  }
+
+  if (paymentMethod === "upi") {
+    const descriptor = maskUpiId(request.body.upiId);
+    if (!descriptor) {
+      return { error: "Enter a valid UPI ID for UPI checkout." };
+    }
+
+    return {
+      paymentMethod,
+      payerName,
+      payerEmail,
+      paymentDescriptor: `UPI ${descriptor}`,
+    };
+  }
+
+  const bankName = text(request.body.bankName);
+  if (!bankName) {
+    return { error: "Choose a bank name for netbanking checkout." };
+  }
+
+  return {
+    paymentMethod,
+    payerName,
+    payerEmail,
+    paymentDescriptor: `Netbanking ${bankName}`,
+  };
+}
+
 router.get("/dashboard", authRequired, async (request, response, next) => {
   try {
     response.json(await buildDashboard(request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/payments/history", authRequired, async (request, response, next) => {
+  try {
+    const payments =
+      request.user.role === "student"
+        ? await listPaymentRecords({
+            whereClause: "po.user_id = :userId",
+            params: { userId: request.user.id },
+            limit: 25,
+          })
+        : await listPaymentRecords({
+            whereClause: "c.instructor_id = :ownerId OR :isAdmin = 1",
+            params: {
+              ownerId: request.user.id,
+              isAdmin: request.user.role === "admin" ? 1 : 0,
+            },
+            limit: 25,
+          });
+
+    response.json({ payments });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/courses/:id/checkout", authRequired, async (request, response, next) => {
+  try {
+    const courseId = toInt(request.params.id);
+    if (!courseId) {
+      response.status(400).json({ message: "Invalid course id." });
+      return;
+    }
+
+    if (request.user.role !== "student") {
+      response.status(403).json({ message: "Only student accounts can purchase courses." });
+      return;
+    }
+
+    const course = await getCourseRecord(courseId);
+    if (!course || course.status !== "approved") {
+      response.status(404).json({ message: "Only approved courses can be purchased." });
+      return;
+    }
+
+    const pricing = await getCoursePricing(courseId);
+    if (!pricing.isPaid) {
+      response.status(400).json({ message: "This course is free. Enroll directly instead of using checkout." });
+      return;
+    }
+
+    const paidPurchase = await getPaidCoursePurchase(request.user.id, courseId);
+    if (paidPurchase) {
+      response.json({
+        alreadyPaid: true,
+        order: await getPaymentOrder(Number(paidPurchase.id)),
+        course: await getCourseDetail(courseId, request.user),
+      });
+      return;
+    }
+
+    const existingPendingOrder = await getLatestPaymentOrder(request.user.id, courseId, { statuses: ["pending"] });
+    if (existingPendingOrder) {
+      response.status(201).json({
+        order: await getPaymentOrder(Number(existingPendingOrder.id)),
+        course: await getCourseDetail(courseId, request.user),
+      });
+      return;
+    }
+
+    const createdAt = nowIso();
+    const orderId = Number(
+      (
+        await run(
+          `
+            INSERT INTO payment_orders (user_id, course_id, amount, currency, status, created_at, updated_at)
+            VALUES (:userId, :courseId, :amount, :currency, 'pending', :createdAt, :updatedAt)
+          `,
+          {
+            userId: request.user.id,
+            courseId,
+            amount: pricing.priceAmount,
+            currency: pricing.currency,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        )
+      ).lastInsertRowid,
+    );
+
+    response.status(201).json({
+      order: await getPaymentOrder(orderId),
+      course: await getCourseDetail(courseId, request.user),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/payments/orders/:id/confirm", authRequired, async (request, response, next) => {
+  try {
+    const orderId = toInt(request.params.id);
+    if (!orderId) {
+      response.status(400).json({ message: "Invalid order id." });
+      return;
+    }
+
+    const order = await getPaymentOrder(orderId);
+    if (!order || Number(order.userId) !== Number(request.user.id)) {
+      response.status(404).json({ message: "Payment order not found." });
+      return;
+    }
+
+    if (order.status === "paid") {
+      response.json({
+        order,
+        course: await getCourseDetail(Number(order.courseId), request.user),
+      });
+      return;
+    }
+
+    const course = await getCourseRecord(Number(order.courseId));
+    if (!course || course.status !== "approved") {
+      response.status(400).json({ message: "This course is not available for payment right now." });
+      return;
+    }
+
+    const paymentPayload = getPaymentPayload(request);
+    if (paymentPayload.error) {
+      response.status(400).json({ message: paymentPayload.error });
+      return;
+    }
+
+    await withTransaction(async () => {
+      await run(
+        `
+          UPDATE payment_orders
+          SET status = 'paid',
+              payment_method = :paymentMethod,
+              payment_descriptor = :paymentDescriptor,
+              payer_name = :payerName,
+              payer_email = :payerEmail,
+              transaction_reference = :transactionReference,
+              failure_reason = '',
+              updated_at = :updatedAt,
+              paid_at = :paidAt
+          WHERE id = :orderId
+        `,
+        {
+          orderId,
+          paymentMethod: paymentPayload.paymentMethod,
+          paymentDescriptor: paymentPayload.paymentDescriptor,
+          payerName: paymentPayload.payerName,
+          payerEmail: paymentPayload.payerEmail,
+          transactionReference: createTransactionReference(orderId),
+          updatedAt: nowIso(),
+          paidAt: nowIso(),
+        },
+      );
+
+      await ensureEnrollment(request.user.id, Number(order.courseId));
+    });
+
+    await notifyUser(
+      request.user.id,
+      "Payment successful",
+      `Your payment for ${course.title} is complete and the course is now unlocked.`,
+      `/learn/${order.courseId}`,
+    );
+    await notifyUser(
+      Number(course.instructorId),
+      "New paid enrollment",
+      `${request.user.name} purchased ${course.title}.`,
+      "/#studio",
+    );
+
+    response.json({
+      order: await getPaymentOrder(orderId),
+      course: await getCourseDetail(Number(order.courseId), request.user),
+    });
   } catch (error) {
     next(error);
   }
@@ -104,6 +374,12 @@ router.post("/courses/:id/enroll", authRequired, async (request, response, next)
     const course = await getCourseRecord(courseId);
     if (!course || course.status !== "approved") {
       response.status(404).json({ message: "Only approved courses can be enrolled in." });
+      return;
+    }
+
+    const pricing = await getCoursePricing(courseId);
+    if (request.user.role === "student" && pricing.isPaid && !(await getPaidCoursePurchase(request.user.id, courseId))) {
+      response.status(403).json({ message: "Purchase this course before enrolling in it." });
       return;
     }
 

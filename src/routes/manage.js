@@ -14,6 +14,7 @@ const {
   notifyEnrolledLearners,
   notifyRole,
   parseQuestionPayload,
+  upsertCoursePricing,
 } = require("../services");
 const { cleanupRequestFiles, upload } = require("../uploads");
 const { persistUploadedFile, safeDeleteUpload } = require("../storage");
@@ -177,6 +178,8 @@ router.post("/courses", authRequired, roleRequired("instructor", "admin"), async
     const description = text(request.body.description);
     const category = text(request.body.category);
     const introText = text(request.body.introText);
+    const priceAmount = Math.max(toInt(request.body.priceAmount) || 0, 0);
+    const currency = text(request.body.currency).toUpperCase() || "INR";
 
     if (!title || !description || !category) {
       response.status(400).json({ message: "Title, description, and category are required." });
@@ -205,6 +208,7 @@ router.post("/courses", authRequired, roleRequired("instructor", "admin"), async
         )
       ).lastInsertRowid,
     );
+    await upsertCoursePricing(courseId, { priceAmount, currency });
 
     if (status === "pending") {
       await notifyAdmins("Course approval requested", `${request.user.name} submitted "${title}" for approval.`, "/#admin");
@@ -224,6 +228,8 @@ router.put("/courses/:id", authRequired, roleRequired("instructor", "admin"), at
     const description = text(request.body.description);
     const category = text(request.body.category);
     const introText = text(request.body.introText);
+    const priceAmount = Math.max(toInt(request.body.priceAmount) || 0, 0);
+    const currency = text(request.body.currency).toUpperCase() || "INR";
 
     if (!title || !description || !category) {
       response.status(400).json({ message: "Title, description, and category are required." });
@@ -253,6 +259,7 @@ router.put("/courses/:id", authRequired, roleRequired("instructor", "admin"), at
         courseId: Number(request.course.id),
       },
     );
+    await upsertCoursePricing(Number(request.course.id), { priceAmount, currency });
 
     if (request.user.role === "instructor") {
       await notifyAdmins("Course updated", `${request.user.name} updated "${title}" and it is ready for review again.`, "/#admin");

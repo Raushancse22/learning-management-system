@@ -11,6 +11,7 @@ export default function PublicCoursePage({
   loading,
   onSelectLesson,
   onEnroll,
+  onPurchase,
   onOpenLearning,
 }) {
   return (
@@ -39,6 +40,7 @@ export default function PublicCoursePage({
         busyAction={busyAction}
         onSelectLesson={onSelectLesson}
         onEnroll={onEnroll}
+        onPurchase={onPurchase}
         onOpenLearning={onOpenLearning}
         loading={loading}
         mode="preview"

@@ -75,6 +75,7 @@ function mapCourseSummary(row) {
   const lessonCount = Number(row.lessonCount || 0);
   const completedLessons = Number(row.completedLessons || 0);
   const progressPercent = lessonCount > 0 ? Math.round((completedLessons / lessonCount) * 100) : 0;
+  const priceAmount = Math.max(Number(row.priceAmount || 0), 0);
 
   return {
     id: Number(row.id),
@@ -90,6 +91,10 @@ function mapCourseSummary(row) {
     lessonCount,
     completedLessons,
     progressPercent,
+    priceAmount,
+    currency: row.currency || "INR",
+    isPaid: priceAmount > 0,
+    hasPurchased: Boolean(row.hasPurchased),
     enrollmentCount: Number(row.enrollmentCount || 0),
     quizCount: Number(row.quizCount || 0),
     isEnrolled: Boolean(row.isEnrolled),
@@ -111,11 +116,20 @@ async function listCourseSummaries({ viewerId = 0, whereClause = "1 = 1", params
         c.created_at AS createdAt,
         c.updated_at AS updatedAt,
         u.name AS instructorName,
+        COALESCE((SELECT cp.price_amount FROM course_pricing cp WHERE cp.course_id = c.id), 0) AS priceAmount,
+        COALESCE((SELECT cp.currency FROM course_pricing cp WHERE cp.course_id = c.id), 'INR') AS currency,
         (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) AS lessonCount,
         (SELECT COUNT(*) FROM lesson_progress lp WHERE lp.course_id = c.id AND lp.user_id = :viewerId) AS completedLessons,
         (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = c.id) AS enrollmentCount,
         (SELECT COUNT(*) FROM quizzes q WHERE q.course_id = c.id) AS quizCount,
         EXISTS(SELECT 1 FROM enrollments e2 WHERE e2.course_id = c.id AND e2.user_id = :viewerId) AS isEnrolled,
+        EXISTS(
+          SELECT 1
+          FROM payment_orders po
+          WHERE po.course_id = c.id
+            AND po.user_id = :viewerId
+            AND po.status = 'paid'
+        ) AS hasPurchased,
         (SELECT e3.last_lesson_id FROM enrollments e3 WHERE e3.course_id = c.id AND e3.user_id = :viewerId) AS lastLessonId
       FROM courses c
       JOIN users u ON u.id = c.instructor_id
@@ -150,6 +164,181 @@ async function getCourseRecord(courseId) {
 
 function canManageCourse(user, course) {
   return Boolean(user) && (user.role === "admin" || Number(course.instructorId) === Number(user.id));
+}
+
+async function getCoursePricing(courseId) {
+  const row = await get(
+    `
+      SELECT price_amount AS priceAmount, currency, updated_at AS updatedAt
+      FROM course_pricing
+      WHERE course_id = :courseId
+    `,
+    { courseId },
+  );
+
+  const priceAmount = Math.max(Number(row?.priceAmount || 0), 0);
+  return {
+    priceAmount,
+    currency: row?.currency || "INR",
+    isPaid: priceAmount > 0,
+    updatedAt: row?.updatedAt || null,
+  };
+}
+
+async function upsertCoursePricing(courseId, { priceAmount = 0, currency = "INR" } = {}) {
+  const normalizedAmount = Math.max(Number(priceAmount || 0), 0);
+  const normalizedCurrency = text(currency).toUpperCase() || "INR";
+  const existing = await get("SELECT id FROM course_pricing WHERE course_id = :courseId", { courseId });
+
+  if (existing) {
+    await run(
+      `
+        UPDATE course_pricing
+        SET price_amount = :priceAmount,
+            currency = :currency,
+            updated_at = :updatedAt
+        WHERE course_id = :courseId
+      `,
+      {
+        courseId,
+        priceAmount: normalizedAmount,
+        currency: normalizedCurrency,
+        updatedAt: nowIso(),
+      },
+    );
+    return;
+  }
+
+  await run(
+    `
+      INSERT INTO course_pricing (course_id, price_amount, currency, updated_at)
+      VALUES (:courseId, :priceAmount, :currency, :updatedAt)
+    `,
+    {
+      courseId,
+      priceAmount: normalizedAmount,
+      currency: normalizedCurrency,
+      updatedAt: nowIso(),
+    },
+  );
+}
+
+async function getPaymentOrder(orderId) {
+  return get(
+    `
+      SELECT
+        po.id,
+        po.user_id AS userId,
+        po.course_id AS courseId,
+        po.amount,
+        po.currency,
+        po.status,
+        po.payment_method AS paymentMethod,
+        po.payment_descriptor AS paymentDescriptor,
+        po.payer_name AS payerName,
+        po.payer_email AS payerEmail,
+        po.transaction_reference AS transactionReference,
+        po.failure_reason AS failureReason,
+        po.created_at AS createdAt,
+        po.updated_at AS updatedAt,
+        po.paid_at AS paidAt,
+        c.title AS courseTitle
+      FROM payment_orders po
+      JOIN courses c ON c.id = po.course_id
+      WHERE po.id = :orderId
+    `,
+    { orderId },
+  );
+}
+
+async function getLatestPaymentOrder(userId, courseId, { statuses = [] } = {}) {
+  const statusList = Array.isArray(statuses) && statuses.length
+    ? statuses.filter(Boolean).map((status) => `'${status}'`).join(", ")
+    : null;
+
+  return get(
+    `
+      SELECT
+        id,
+        user_id AS userId,
+        course_id AS courseId,
+        amount,
+        currency,
+        status,
+        payment_method AS paymentMethod,
+        payment_descriptor AS paymentDescriptor,
+        payer_name AS payerName,
+        payer_email AS payerEmail,
+        transaction_reference AS transactionReference,
+        failure_reason AS failureReason,
+        created_at AS createdAt,
+        updated_at AS updatedAt,
+        paid_at AS paidAt
+      FROM payment_orders
+      WHERE user_id = :userId
+        AND course_id = :courseId
+        ${statusList ? `AND status IN (${statusList})` : ""}
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `,
+    { userId, courseId },
+  );
+}
+
+async function getPaidCoursePurchase(userId, courseId) {
+  return getLatestPaymentOrder(userId, courseId, { statuses: ["paid"] });
+}
+
+async function listPaymentRecords({ whereClause = "1 = 1", params = {}, limit = 10 } = {}) {
+  const rows = await all(
+    `
+      SELECT
+        po.id,
+        po.user_id AS userId,
+        po.course_id AS courseId,
+        po.amount,
+        po.currency,
+        po.status,
+        po.payment_method AS paymentMethod,
+        po.payment_descriptor AS paymentDescriptor,
+        po.payer_name AS payerName,
+        po.payer_email AS payerEmail,
+        po.transaction_reference AS transactionReference,
+        po.failure_reason AS failureReason,
+        po.created_at AS createdAt,
+        po.updated_at AS updatedAt,
+        po.paid_at AS paidAt,
+        c.title AS courseTitle,
+        u.name AS userName
+      FROM payment_orders po
+      JOIN courses c ON c.id = po.course_id
+      JOIN users u ON u.id = po.user_id
+      WHERE ${whereClause}
+      ORDER BY COALESCE(po.paid_at, po.created_at) DESC, po.id DESC
+      LIMIT ${Number(limit) || 10}
+    `,
+    params,
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    userId: Number(row.userId),
+    userName: row.userName,
+    courseId: Number(row.courseId),
+    courseTitle: row.courseTitle,
+    amount: Number(row.amount || 0),
+    currency: row.currency || "INR",
+    status: row.status,
+    paymentMethod: row.paymentMethod,
+    paymentDescriptor: row.paymentDescriptor || "",
+    payerName: row.payerName || "",
+    payerEmail: row.payerEmail || "",
+    transactionReference: row.transactionReference || "",
+    failureReason: row.failureReason || "",
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    paidAt: row.paidAt,
+  }));
 }
 
 function canManageLiveClass(user, liveClass) {
@@ -470,7 +659,7 @@ async function buildDashboard(user) {
     const averageScoreRow = await get("SELECT AVG((score * 100.0) / total) AS averageScore FROM quiz_attempts WHERE user_id = :userId", {
       userId: user.id,
     });
-    const recentAttempts = (
+  const recentAttempts = (
       await all(
         `
           SELECT qa.score, qa.total, qa.submitted_at AS submittedAt, q.title AS quizTitle, c.title AS courseTitle
@@ -491,6 +680,20 @@ async function buildDashboard(user) {
       quizTitle: row.quizTitle,
       courseTitle: row.courseTitle,
     }));
+    const totalSpendRow = await get(
+      `
+        SELECT COALESCE(SUM(amount), 0) AS totalSpend
+        FROM payment_orders
+        WHERE user_id = :userId
+          AND status = 'paid'
+      `,
+      { userId: user.id },
+    );
+    const recentPayments = await listPaymentRecords({
+      whereClause: "po.user_id = :userId AND po.status = 'paid'",
+      params: { userId: user.id },
+      limit: 5,
+    });
 
     return {
       role: "student",
@@ -499,9 +702,12 @@ async function buildDashboard(user) {
         completedLessons: Number(completedLessonsRow?.count || 0),
         averageScore: Math.round(Number(averageScoreRow?.averageScore || 0)),
         streak: await calculateStreak(user.id),
+        totalSpend: Number(totalSpendRow?.totalSpend || 0),
+        paidCourses: recentPayments.length,
       },
       courses: enrolledCourses,
       recentAttempts,
+      recentPayments,
       notifications: await getNotificationsForUser(user),
     };
   }
@@ -532,6 +738,31 @@ async function buildDashboard(user) {
       `,
       { ownerId: user.id },
     );
+    const revenueRow = await get(
+      `
+        SELECT COALESCE(SUM(po.amount), 0) AS revenue
+        FROM payment_orders po
+        JOIN courses c ON c.id = po.course_id
+        WHERE c.instructor_id = :ownerId
+          AND po.status = 'paid'
+      `,
+      { ownerId: user.id },
+    );
+    const paidOrdersRow = await get(
+      `
+        SELECT COUNT(*) AS count
+        FROM payment_orders po
+        JOIN courses c ON c.id = po.course_id
+        WHERE c.instructor_id = :ownerId
+          AND po.status = 'paid'
+      `,
+      { ownerId: user.id },
+    );
+    const recentSales = await listPaymentRecords({
+      whereClause: "c.instructor_id = :ownerId AND po.status = 'paid'",
+      params: { ownerId: user.id },
+      limit: 5,
+    });
 
     return {
       role: "instructor",
@@ -541,9 +772,12 @@ async function buildDashboard(user) {
         pendingCourses: myCourses.filter((course) => course.status === "pending").length,
         learners: Number(learnersRow?.count || 0),
         lessons: Number(lessonsRow?.count || 0),
+        revenue: Number(revenueRow?.revenue || 0),
+        paidOrders: Number(paidOrdersRow?.count || 0),
       },
       courses: myCourses,
       recentEnrollments,
+      recentSales,
       notifications: await getNotificationsForUser(user),
     };
   }
@@ -552,8 +786,14 @@ async function buildDashboard(user) {
   const coursesRow = await get("SELECT COUNT(*) AS count FROM courses");
   const pendingCoursesRow = await get("SELECT COUNT(*) AS count FROM courses WHERE status = 'pending'");
   const enrollmentsRow = await get("SELECT COUNT(*) AS count FROM enrollments");
+  const revenueRow = await get("SELECT COALESCE(SUM(amount), 0) AS revenue FROM payment_orders WHERE status = 'paid'");
+  const successfulPaymentsRow = await get("SELECT COUNT(*) AS count FROM payment_orders WHERE status = 'paid'");
   const recentUsers = await all("SELECT id, name, email, role, created_at AS createdAt FROM users ORDER BY created_at DESC LIMIT 6");
   const pendingCourses = await listCourseSummaries({ viewerId: user.id, whereClause: "c.status = 'pending'" });
+  const recentPayments = await listPaymentRecords({
+    whereClause: "po.status = 'paid'",
+    limit: 5,
+  });
 
   return {
     role: "admin",
@@ -562,9 +802,12 @@ async function buildDashboard(user) {
       totalCourses: Number(coursesRow?.count || 0),
       pendingCourses: Number(pendingCoursesRow?.count || 0),
       enrollments: Number(enrollmentsRow?.count || 0),
+      revenue: Number(revenueRow?.revenue || 0),
+      successfulPayments: Number(successfulPaymentsRow?.count || 0),
     },
     recentUsers: recentUsers.map((row) => ({ ...row, id: Number(row.id) })),
     pendingCourses,
+    recentPayments,
     notifications: await getNotificationsForUser(user),
   };
 }
@@ -612,13 +855,21 @@ async function getCourseDetail(courseId, user) {
 
   const completedLessonIds = user ? await getCompletedLessonIds(user.id, courseId) : [];
   const enrollment = user ? await getEnrollment(user.id, courseId) : null;
+  const paidPurchase = user ? await getPaidCoursePurchase(user.id, courseId) : null;
+  const canAccessContent = canManage || Boolean(enrollment);
+  const safeLessons = lessons.map((lesson) => ({
+    ...lesson,
+    videoType: canAccessContent ? lesson.videoType : "none",
+    videoUrl: canAccessContent ? lesson.videoUrl : "",
+    materialPath: canAccessContent ? lesson.materialPath : "",
+  }));
   const nextLesson = lessons.find((lesson) => !completedLessonIds.includes(lesson.id));
   const quizRow = await get("SELECT id, title, instructions, created_at AS createdAt FROM quizzes WHERE course_id = :courseId", { courseId });
 
   let quiz = null;
   if (quizRow) {
     const includeAnswers = canManage;
-    const questions = (
+    const questionRows = (
       await all(
         `
           SELECT id, prompt, option_a AS optionA, option_b AS optionB, option_c AS optionC, option_d AS optionD, correct_option AS correctOption
@@ -628,17 +879,20 @@ async function getCourseDetail(courseId, user) {
         `,
         { quizId: quizRow.id },
       )
-    ).map((row) => ({
-      id: Number(row.id),
-      prompt: row.prompt,
-      options: {
-        a: row.optionA,
-        b: row.optionB,
-        c: row.optionC,
-        d: row.optionD,
-      },
-      ...(includeAnswers ? { correctOption: row.correctOption } : {}),
-    }));
+    );
+    const questions = canAccessContent
+      ? questionRows.map((row) => ({
+          id: Number(row.id),
+          prompt: row.prompt,
+          options: {
+            a: row.optionA,
+            b: row.optionB,
+            c: row.optionC,
+            d: row.optionD,
+          },
+          ...(includeAnswers ? { correctOption: row.correctOption } : {}),
+        }))
+      : [];
 
     quiz = {
       id: Number(quizRow.id),
@@ -646,6 +900,7 @@ async function getCourseDetail(courseId, user) {
       instructions: quizRow.instructions,
       createdAt: quizRow.createdAt,
       questions,
+      questionCount: questionRows.length,
       latestAttempt: user ? await getLatestQuizAttempt(user.id, Number(quizRow.id)) : null,
     };
   }
@@ -655,14 +910,25 @@ async function getCourseDetail(courseId, user) {
       ...summary,
       canManage,
       canApprove: Boolean(user && user.role === "admin"),
+      canAccessContent,
+      needsPurchase: Boolean(user && user.role === "student" && summary.isPaid && !summary.hasPurchased && !canManage),
+      paymentLocked: Boolean(summary.isPaid && !canAccessContent && !canManage),
     },
-    lessons,
+    lessons: safeLessons,
     progress: {
       completedLessonIds,
       lastLessonId: enrollment?.lastLessonId ? Number(enrollment.lastLessonId) : null,
       nextLessonId: nextLesson ? nextLesson.id : null,
       progressPercent: summary.progressPercent,
       totalLessons: summary.lessonCount,
+    },
+    payment: {
+      priceAmount: summary.priceAmount,
+      currency: summary.currency,
+      isPaid: summary.isPaid,
+      hasPurchased: summary.hasPurchased,
+      latestPaidAt: paidPurchase?.paidAt || null,
+      latestOrderId: paidPurchase?.id ? Number(paidPurchase.id) : null,
     },
     quiz,
   };
@@ -806,6 +1072,12 @@ module.exports = {
   mapCourseSummary,
   listCourseSummaries,
   getCourseRecord,
+  getCoursePricing,
+  upsertCoursePricing,
+  getPaymentOrder,
+  getLatestPaymentOrder,
+  getPaidCoursePurchase,
+  listPaymentRecords,
   canManageCourse,
   canManageLiveClass,
   getLiveClassState,

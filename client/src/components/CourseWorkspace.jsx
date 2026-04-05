@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { FaCheckCircle, FaDownload, FaRegCircle, FaUserLock } from "react-icons/fa";
+import { FaCheckCircle, FaDownload, FaLock, FaRegCircle, FaUserLock } from "react-icons/fa";
 
-import { classNames, formatDate, formatPercent, youtubeEmbedUrl } from "../lib/format";
+import { classNames, formatCurrency, formatDate, formatPercent, youtubeEmbedUrl } from "../lib/format";
 
 function VideoPane({ lesson }) {
   if (!lesson) {
@@ -69,7 +69,7 @@ function QuizPanel({ user, course, quiz, busyAction, onSubmitQuiz, mode, onOpenL
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-teal-700">Assessment Preview</p>
         <h3 className="mt-2 text-2xl text-slate-900">{quiz.title}</h3>
         <p className="mt-3 text-sm leading-6 text-slate-600">
-          This course includes {quiz.questions.length} multiple-choice questions and instant scoring once the learner
+          This course includes {quiz.questionCount || quiz.questions.length} multiple-choice questions and instant scoring once the learner
           enters the dedicated learning workspace.
         </p>
         {user && course.isEnrolled ? (
@@ -161,6 +161,7 @@ export default function CourseWorkspace({
   onCompleteLesson,
   onSubmitQuiz,
   onEnroll,
+  onPurchase,
   onOpenLearning,
   loading,
   mode = "learn",
@@ -225,6 +226,7 @@ export default function CourseWorkspace({
   const { course, lessons, progress, quiz } = courseDetail;
   const completedLessonIds = new Set(progress.completedLessonIds);
   const needsEnrollment = Boolean(user && user.role === "student" && !course.canManage && !course.isEnrolled);
+  const needsPurchase = Boolean(user && course.needsPurchase);
   const isPreview = mode === "preview";
 
   return (
@@ -251,8 +253,10 @@ export default function CourseWorkspace({
               <p className="mt-3 text-2xl font-semibold">{progress.totalLessons}</p>
             </div>
             <div className="rounded-[24px] bg-amber-50 px-5 py-4 text-amber-900">
-              <p className="text-xs uppercase tracking-[0.25em] text-amber-700">Updated</p>
-              <p className="mt-3 text-sm font-semibold">{formatDate(course.updatedAt)}</p>
+              <p className="text-xs uppercase tracking-[0.25em] text-amber-700">{course.isPaid ? "Price" : "Updated"}</p>
+              <p className="mt-3 text-sm font-semibold">
+                {course.isPaid ? formatCurrency(course.priceAmount, course.currency) : formatDate(course.updatedAt)}
+              </p>
             </div>
           </div>
         </div>
@@ -269,17 +273,41 @@ export default function CourseWorkspace({
         {needsEnrollment ? (
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[28px] border border-amber-200 bg-amber-50 p-5">
             <div>
-              <p className="text-sm font-semibold text-amber-900">Enroll to track lesson completion and quiz results.</p>
-              <p className="mt-1 text-sm text-amber-800">Your progress percentage and resume point are saved after enrollment.</p>
+              <p className="text-sm font-semibold text-amber-900">
+                {needsPurchase ? "Purchase to unlock the full course experience." : "Enroll to track lesson completion and quiz results."}
+              </p>
+              <p className="mt-1 text-sm text-amber-800">
+                {needsPurchase
+                  ? `Pay ${formatCurrency(course.priceAmount, course.currency)} to unlock lesson videos, downloads, and quizzes instantly.`
+                  : "Your progress percentage and resume point are saved after enrollment."}
+              </p>
             </div>
             <button
               className="button-warm"
               type="button"
-              disabled={busyAction === `enroll:${course.id}`}
-              onClick={() => onEnroll?.(course.id)}
+              disabled={needsPurchase ? busyAction === `checkout:${course.id}` : busyAction === `enroll:${course.id}`}
+              onClick={() => (needsPurchase ? onPurchase?.(course.id) : onEnroll?.(course.id))}
             >
-              {busyAction === `enroll:${course.id}` ? "Enrolling..." : "Enroll Now"}
+              {needsPurchase
+                ? busyAction === `checkout:${course.id}`
+                  ? "Opening checkout..."
+                  : "Buy Course"
+                : busyAction === `enroll:${course.id}`
+                  ? "Enrolling..."
+                  : "Enroll Now"}
             </button>
+          </div>
+        ) : null}
+
+        {course.paymentLocked ? (
+          <div className="mt-6 rounded-[28px] border border-slate-200 bg-white/90 p-5 text-sm text-slate-700">
+            <span className="inline-flex items-center gap-2 font-semibold text-slate-900">
+              <FaLock className="text-amber-600" />
+              This paid course is currently in preview mode.
+            </span>
+            <p className="mt-2 leading-6 text-slate-600">
+              Module titles and learning outcomes are visible, but lesson videos, study materials, and quiz questions unlock only after purchase.
+            </p>
           </div>
         ) : null}
 

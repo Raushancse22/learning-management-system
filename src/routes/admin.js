@@ -106,6 +106,8 @@ router.get("/admin/analytics", authRequired, roleRequired("admin"), async (reque
       totalEnrollments: Number((await get("SELECT COUNT(*) AS count FROM enrollments"))?.count || 0),
       completedLessons: Number((await get("SELECT COUNT(*) AS count FROM lesson_progress"))?.count || 0),
       quizAttempts: Number((await get("SELECT COUNT(*) AS count FROM quiz_attempts"))?.count || 0),
+      successfulPayments: Number((await get("SELECT COUNT(*) AS count FROM payment_orders WHERE status = 'paid'"))?.count || 0),
+      revenue: Number((await get("SELECT COALESCE(SUM(amount), 0) AS revenue FROM payment_orders WHERE status = 'paid'"))?.revenue || 0),
     };
 
     const pendingCourses = await listCourseSummaries({

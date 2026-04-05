@@ -62,9 +62,12 @@ export const api = {
     return request(`/api/catalog${query ? `?${query}` : ""}`);
   },
   getDashboard: () => request("/api/dashboard"),
+  getPaymentHistory: () => request("/api/payments/history"),
   getLiveClasses: () => request("/api/live-classes"),
   getCourse: (courseId) => request(`/api/courses/${courseId}`),
   enroll: (courseId) => request(`/api/courses/${courseId}/enroll`, { method: "POST" }),
+  startCheckout: (courseId) => request(`/api/courses/${courseId}/checkout`, { method: "POST" }),
+  confirmPayment: (orderId, payload) => request(`/api/payments/orders/${orderId}/confirm`, { method: "POST", body: payload }),
   registerLiveClass: (liveClassId) => request(`/api/live-classes/${liveClassId}/register`, { method: "POST" }),
   resumeLesson: (lessonId) => request(`/api/lessons/${lessonId}/resume`, { method: "POST" }),
   completeLesson: (lessonId) => request(`/api/lessons/${lessonId}/complete`, { method: "POST" }),

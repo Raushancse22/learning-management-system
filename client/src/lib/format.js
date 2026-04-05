@@ -22,6 +22,14 @@ export function formatPercent(value) {
   return `${safe}%`;
 }
 
+export function formatCurrency(amount = 0, currency = "INR") {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: currency || "INR",
+    maximumFractionDigits: 0,
+  }).format(Number(amount || 0));
+}
+
 export function youtubeEmbedUrl(url = "") {
   try {
     const parsed = new URL(url);

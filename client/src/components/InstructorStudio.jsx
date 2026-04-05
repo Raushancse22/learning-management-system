@@ -8,6 +8,8 @@ const emptyCourseForm = {
   description: "",
   category: "",
   introText: "",
+  priceAmount: 0,
+  currency: "INR",
 };
 
 const emptyLessonForm = {
@@ -67,6 +69,8 @@ export default function InstructorStudio({
       description: selectedSummary.description || "",
       category: selectedSummary.category || "",
       introText: selectedSummary.introText || "",
+      priceAmount: selectedSummary.priceAmount || 0,
+      currency: selectedSummary.currency || "INR",
     });
     setLessonForm({
       ...emptyLessonForm,
@@ -179,6 +183,23 @@ export default function InstructorStudio({
               value={courseForm.category}
               onChange={(event) => setCourseForm((current) => ({ ...current, category: event.target.value }))}
             />
+            <input
+              className="field"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Course price"
+              value={courseForm.priceAmount}
+              onChange={(event) => setCourseForm((current) => ({ ...current, priceAmount: event.target.value }))}
+            />
+            <select
+              className="field"
+              value={courseForm.currency}
+              onChange={(event) => setCourseForm((current) => ({ ...current, currency: event.target.value }))}
+            >
+              <option value="INR">INR</option>
+              <option value="USD">USD</option>
+            </select>
             <textarea
               className="field md:col-span-2"
               rows="4"

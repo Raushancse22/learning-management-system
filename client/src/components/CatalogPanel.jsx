@@ -1,7 +1,7 @@
 import React from "react";
 import { FaBookOpen, FaCompass, FaPlayCircle, FaUserGraduate } from "react-icons/fa";
 
-import { formatPercent } from "../lib/format";
+import { formatCurrency, formatPercent } from "../lib/format";
 
 function EmptyState({ user }) {
   return (
@@ -17,9 +17,11 @@ function EmptyState({ user }) {
   );
 }
 
-function CourseCard({ course, user, onOpenCourse, onEnroll, busyAction }) {
+function CourseCard({ course, user, onOpenCourse, onEnroll, onPurchase, busyAction }) {
   const isStudent = user?.role === "student";
   const enrollBusy = busyAction === `enroll:${course.id}`;
+  const purchaseBusy = busyAction === `checkout:${course.id}`;
+  const actionLabel = course.isPaid ? "Buy Now" : "Enroll";
 
   return (
     <article className="section-card interactive-card flex h-full flex-col p-6">
@@ -30,8 +32,11 @@ function CourseCard({ course, user, onOpenCourse, onEnroll, busyAction }) {
           </span>
           <h3 className="mt-4 text-2xl text-slate-900">{course.title}</h3>
         </div>
-        <div className="rounded-2xl bg-teal-50 px-3 py-2 text-right text-sm font-semibold text-teal-700">
-          {course.lessonCount} lessons
+        <div className="space-y-2 text-right">
+          <div className="rounded-2xl bg-teal-50 px-3 py-2 text-sm font-semibold text-teal-700">{course.lessonCount} lessons</div>
+          <div className={`rounded-2xl px-3 py-2 text-sm font-semibold ${course.isPaid ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+            {course.isPaid ? formatCurrency(course.priceAmount, course.currency) : "Free"}
+          </div>
         </div>
       </div>
 
@@ -68,11 +73,11 @@ function CourseCard({ course, user, onOpenCourse, onEnroll, busyAction }) {
           <button
             className="button-primary flex-1"
             type="button"
-            disabled={enrollBusy}
-            onClick={() => onEnroll(course.id)}
+            disabled={course.isPaid ? purchaseBusy : enrollBusy}
+            onClick={() => (course.isPaid ? onPurchase(course.id) : onEnroll(course.id))}
           >
             <FaPlayCircle />
-            <span className="ml-2">{enrollBusy ? "Joining..." : "Enroll"}</span>
+            <span className="ml-2">{course.isPaid ? (purchaseBusy ? "Opening..." : actionLabel) : enrollBusy ? "Joining..." : actionLabel}</span>
           </button>
         ) : (
           <button className="button-warm flex-1" type="button" onClick={() => onOpenCourse(course.id)}>
@@ -95,6 +100,7 @@ export default function CatalogPanel({
   onFilterChange,
   onOpenCourse,
   onEnroll,
+  onPurchase,
 }) {
   return (
     <section className="space-y-6">
@@ -162,6 +168,7 @@ export default function CatalogPanel({
               busyAction={busyAction}
               onOpenCourse={onOpenCourse}
               onEnroll={onEnroll}
+              onPurchase={onPurchase}
             />
           ))}
         </div>

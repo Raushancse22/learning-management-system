@@ -2,6 +2,7 @@ import React, { useCallback, useDeferredValue, useEffect, useState } from "react
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
 import Dashboard from "./components/Dashboard";
+import PaymentModal from "./components/PaymentModal";
 import { api } from "./lib/api";
 import { staticPages } from "./lib/siteContent";
 import PublicLayout from "./layouts/PublicLayout";
@@ -107,6 +108,7 @@ export default function App() {
 
   const [busyAction, setBusyAction] = useState(null);
   const [toast, setToast] = useState(null);
+  const [checkout, setCheckout] = useState(null);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -395,6 +397,7 @@ export default function App() {
       setAdminAnalytics(null);
       setAdminUsers([]);
       clearSelectedCourse();
+      setCheckout(null);
       setBusyAction(null);
       navigate("/");
       showToast("You have been signed out.");
@@ -444,6 +447,67 @@ export default function App() {
         await refreshAfterMutation(user);
         navigate(`/learn/${courseId}`);
         showToast(`Enrollment confirmed for ${detail.course.title}.`);
+      } catch (error) {
+        showToast(getErrorMessage(error));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [navigate, refreshAfterMutation, showToast, user],
+  );
+
+  const handlePurchaseCourse = useCallback(
+    async (courseId) => {
+      if (!user) {
+        showToast("Sign in first to purchase a course.");
+        navigate("/login");
+        return false;
+      }
+
+      setBusyAction(`checkout:${courseId}`);
+      try {
+        const response = await api.startCheckout(courseId);
+        if (response.course) {
+          setSelectedCourse(response.course);
+        }
+
+        if (response.alreadyPaid) {
+          await refreshAfterMutation(user);
+          navigate(`/learn/${courseId}`);
+          showToast("You have already purchased this course.");
+          return true;
+        }
+
+        setCheckout({
+          order: response.order,
+          course: response.course?.course || catalog.find((entry) => entry.id === courseId) || null,
+        });
+        return true;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return false;
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [catalog, navigate, refreshAfterMutation, showToast, user],
+  );
+
+  const handleCloseCheckout = useCallback(() => {
+    setCheckout(null);
+  }, []);
+
+  const handleConfirmPayment = useCallback(
+    async (orderId, payload) => {
+      setBusyAction("confirm-payment");
+      try {
+        const response = await api.confirmPayment(orderId, payload);
+        setSelectedCourse(response.course);
+        setActiveLessonId(response.course.progress.lastLessonId || response.course.progress.nextLessonId || response.course.lessons[0]?.id || null);
+        setCheckout(null);
+        await refreshAfterMutation(user);
+        navigate(`/learn/${response.course.course.id}`);
+        showToast(`Payment successful for ${response.course.course.title}.`);
       } catch (error) {
         showToast(getErrorMessage(error));
       } finally {
@@ -736,6 +800,7 @@ export default function App() {
     onFilterChange: handleFilterChange,
     onOpenCourse: handleOpenCourse,
     onEnroll: handleEnroll,
+    onPurchase: handlePurchaseCourse,
     onSelectLesson: handleSelectLesson,
     onCompleteLesson: handleCompleteLesson,
     onSubmitQuiz: handleSubmitQuiz,
@@ -778,6 +843,7 @@ export default function App() {
                 onFilterChange={handleFilterChange}
                 onOpenCourse={handleOpenCoursePreview}
                 onEnroll={handleEnroll}
+                onPurchase={handlePurchaseCourse}
               />
             </PublicLayout>
           }
@@ -795,6 +861,7 @@ export default function App() {
                 onLoadCourse={loadCourse}
                 onSelectLesson={handleSelectLesson}
                 onEnroll={handleEnroll}
+                onPurchase={handlePurchaseCourse}
                 onOpenLearning={handleOpenLearningPage}
               />
             </PublicLayout>
@@ -946,6 +1013,8 @@ export default function App() {
           {toast}
         </div>
       ) : null}
+
+      <PaymentModal checkout={checkout} user={user} busyAction={busyAction} onClose={handleCloseCheckout} onConfirm={handleConfirmPayment} />
     </>
   );
 }
