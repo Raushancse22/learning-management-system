@@ -4,6 +4,9 @@
   "description": "Full-stack learning management system website built with Node.js, Express, SQLite, React, and Tailwind CSS.",
   "main": "server.js",
   "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "npm run build && node server.js",
     "server": "node server.js",

@@ -73,6 +73,28 @@ To deploy:
    - `JWT_SECRET`
 4. Complete the deploy and then add your custom domain `gatemate.tech`
 
+## Deploy on Hostinger
+
+As of April 9, 2026, Hostinger supports Node.js Web Apps on Business Web Hosting and Cloud Hosting plans, and full manual Node.js deployment on VPS plans.
+
+For Hostinger Web Apps hosting:
+
+1. Open hPanel and create a new Node.js web app
+2. Import this GitHub repository
+3. Use Node.js `22.x`
+4. Set the build command to `npm run build`
+5. Set the start command to `npm run server`
+6. Add the required environment variables:
+   - `DATABASE_PROVIDER`
+   - `DATABASE_URL`
+   - `STORAGE_PROVIDER`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `RAZORPAY_KEY_ID`
+   - `RAZORPAY_KEY_SECRET`
+   - `JWT_SECRET`
+7. Point your Hostinger domain to the deployed app
+
 ## Cloud setup
 
 1. Copy `.env.example` to `.env`
