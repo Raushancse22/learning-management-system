@@ -363,18 +363,29 @@ export default function App() {
     [clearSelectedCourse, navigate, refreshAfterMutation, showToast],
   );
 
-  const handleRegister = useCallback(
+  const handleCheckRegistration = useCallback(async (payload) => api.checkRegistration(payload), []);
+
+  const handleRequestRegistrationOtp = useCallback(async (payload) => {
+    setBusyAction("request-otp");
+    try {
+      return await api.requestRegistrationOtp(payload);
+    } finally {
+      setBusyAction(null);
+      setInitializing(false);
+    }
+  }, []);
+
+  const handleVerifyRegistrationOtp = useCallback(
     async (payload) => {
-      setBusyAction("register");
+      setBusyAction("verify-otp");
       try {
-        const response = await api.register(payload);
+        const response = await api.verifyRegistrationOtp(payload);
         setUser(response.user);
         clearSelectedCourse();
         await refreshAfterMutation(response.user);
         navigate("/dashboard");
         showToast(`Account ready for ${response.user.name}.`);
-      } catch (error) {
-        showToast(getErrorMessage(error));
+        return response;
       } finally {
         setBusyAction(null);
         setInitializing(false);
@@ -875,7 +886,14 @@ export default function App() {
               <Navigate to="/dashboard" replace />
             ) : (
               <PublicLayout user={user} onLogout={handleLogout}>
-                <AuthPage mode="login" busyAction={busyAction} onLogin={handleLogin} onRegister={handleRegister} />
+                <AuthPage
+                  mode="login"
+                  busyAction={busyAction}
+                  onLogin={handleLogin}
+                  onCheckRegistration={handleCheckRegistration}
+                  onRequestRegistrationOtp={handleRequestRegistrationOtp}
+                  onVerifyRegistrationOtp={handleVerifyRegistrationOtp}
+                />
               </PublicLayout>
             )
           }
@@ -887,7 +905,14 @@ export default function App() {
               <Navigate to="/dashboard" replace />
             ) : (
               <PublicLayout user={user} onLogout={handleLogout}>
-                <AuthPage mode="register" busyAction={busyAction} onLogin={handleLogin} onRegister={handleRegister} />
+                <AuthPage
+                  mode="register"
+                  busyAction={busyAction}
+                  onLogin={handleLogin}
+                  onCheckRegistration={handleCheckRegistration}
+                  onRequestRegistrationOtp={handleRequestRegistrationOtp}
+                  onVerifyRegistrationOtp={handleVerifyRegistrationOtp}
+                />
               </PublicLayout>
             )
           }

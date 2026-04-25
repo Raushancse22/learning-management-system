@@ -32,7 +32,11 @@ function publicUser(row) {
     id: Number(row.id),
     name: row.name,
     email: row.email,
+    mobile: row.mobile || "",
+    examPreparingFor: row.exam_preparing_for || row.examPreparingFor || "",
     role: row.role,
+    emailVerifiedAt: row.email_verified_at || row.emailVerifiedAt || null,
+    mobileVerifiedAt: row.mobile_verified_at || row.mobileVerifiedAt || null,
     createdAt: row.created_at || row.createdAt,
   };
 }
@@ -41,7 +45,7 @@ async function getUserById(userId) {
   return publicUser(
     await get(
       `
-        SELECT id, name, email, role, created_at
+        SELECT id, name, email, mobile, exam_preparing_for, role, email_verified_at, mobile_verified_at, created_at
         FROM users
         WHERE id = :userId
       `,

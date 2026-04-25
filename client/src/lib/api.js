@@ -47,7 +47,9 @@ async function request(path, options = {}) {
 export const api = {
   getSession: () => request("/api/auth/me"),
   login: (payload) => request("/api/auth/login", { method: "POST", body: payload }),
-  register: (payload) => request("/api/auth/register", { method: "POST", body: payload }),
+  checkRegistration: (payload) => request("/api/auth/register/check", { method: "POST", body: payload }),
+  requestRegistrationOtp: (payload) => request("/api/auth/register/request-otp", { method: "POST", body: payload }),
+  verifyRegistrationOtp: (payload) => request("/api/auth/register/verify-otp", { method: "POST", body: payload }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
   getCatalog: (filters = {}) => {
     const searchParams = new URLSearchParams();

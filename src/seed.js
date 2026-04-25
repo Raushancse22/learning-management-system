@@ -9,6 +9,8 @@ const demoUsers = {
     role: "admin",
     email: "admin@gatematelearning.dev",
     legacyEmail: "admin@learnsphere.dev",
+    mobile: "9000000001",
+    examPreparingFor: "",
     password: "Admin@123",
   },
   instructor: {
@@ -17,6 +19,8 @@ const demoUsers = {
     role: "instructor",
     email: "instructor@gatematelearning.dev",
     legacyEmail: "instructor@learnsphere.dev",
+    mobile: "9000000002",
+    examPreparingFor: "",
     password: "Instructor@123",
   },
   student: {
@@ -25,6 +29,8 @@ const demoUsers = {
     role: "student",
     email: "student@gatematelearning.dev",
     legacyEmail: "student@learnsphere.dev",
+    mobile: "9000000003",
+    examPreparingFor: "GATE CSE",
     password: "Student@123",
   },
 };
@@ -57,15 +63,22 @@ async function upsertDemoUser(config, createdAt) {
         UPDATE users
         SET name = :name,
             email = :email,
+            mobile = :mobile,
+            exam_preparing_for = :examPreparingFor,
             password_hash = :passwordHash,
-            role = :role
+            role = :role,
+            email_verified_at = COALESCE(email_verified_at, :verifiedAt),
+            mobile_verified_at = COALESCE(mobile_verified_at, :verifiedAt)
         WHERE id = :userId
       `,
       {
         name: config.name,
         email: config.email,
+        mobile: config.mobile,
+        examPreparingFor: config.examPreparingFor || "",
         passwordHash,
         role: config.role,
+        verifiedAt: createdAt,
         userId: Number(existing.id),
       },
     );
@@ -77,14 +90,18 @@ async function upsertDemoUser(config, createdAt) {
     (
       await run(
         `
-          INSERT INTO users (name, email, password_hash, role, created_at)
-          VALUES (:name, :email, :passwordHash, :role, :createdAt)
+          INSERT INTO users (name, email, mobile, exam_preparing_for, password_hash, role, email_verified_at, mobile_verified_at, created_at)
+          VALUES (:name, :email, :mobile, :examPreparingFor, :passwordHash, :role, :emailVerifiedAt, :mobileVerifiedAt, :createdAt)
         `,
         {
           name: config.name,
           email: config.email,
+          mobile: config.mobile,
+          examPreparingFor: config.examPreparingFor || "",
           passwordHash,
           role: config.role,
+          emailVerifiedAt: createdAt,
+          mobileVerifiedAt: createdAt,
           createdAt,
         },
       )

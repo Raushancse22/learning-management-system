@@ -808,7 +808,9 @@ async function buildDashboard(user) {
   const enrollmentsRow = await get("SELECT COUNT(*) AS count FROM enrollments");
   const revenueRow = await get("SELECT COALESCE(SUM(amount), 0) AS revenue FROM payment_orders WHERE status = 'paid'");
   const successfulPaymentsRow = await get("SELECT COUNT(*) AS count FROM payment_orders WHERE status = 'paid'");
-  const recentUsers = await all("SELECT id, name, email, role, created_at AS createdAt FROM users ORDER BY created_at DESC LIMIT 6");
+  const recentUsers = await all(
+    "SELECT id, name, email, mobile, exam_preparing_for AS examPreparingFor, role, created_at AS createdAt FROM users ORDER BY created_at DESC LIMIT 6",
+  );
   const pendingCourses = await listCourseSummaries({ viewerId: user.id, whereClause: "c.status = 'pending'" });
   const recentPayments = await listPaymentRecords({
     whereClause: "po.status = 'paid'",
